@@ -70,9 +70,12 @@ import static com.oracle.svm.hosted.driver.IncludeOptionsSupport.parseIncludeSel
 public final class DynamicAccessDetectionFeature implements InternalFeature {
 
     public static class Options {
-        @Option(help = "Output all method calls requiring metadata for dynamic access in the reached parts of the project, limited to the provided comma-separated list of class path or module path entries.")//
+        @Option(help = "Serialize all method calls requiring metadata for dynamic access in the reached parts of the project, limited to the provided comma-separated list of class path entries and module or package names.")//
         public static final HostedOptionKey<AccumulatingLocatableMultiOptionValue.Strings> TrackDynamicAccess = new HostedOptionKey<>(
                         AccumulatingLocatableMultiOptionValue.Strings.buildWithCommaDelimiter());
+
+        @Option(help = "Output all method calls requiring metadata for dynamic access found by -H:TrackDynamicAccess to the console.")
+        public static final HostedOptionKey<Boolean> ReportDynamicAccessToConsole = new HostedOptionKey<>(false);
     }
 
     private record MethodsByAccessKind(Map<DynamicAccessDetectionPhase.DynamicAccessKind, CallLocationsByMethod> methodsByAccessKind) {
@@ -108,9 +111,11 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     private Set<String> sourceEntries; // Class path entries and module or package names
     private final Map<String, MethodsByAccessKind> callsBySourceEntry;
     private final Set<FoldEntry> foldEntries = ConcurrentHashMap.newKeySet();
+    private final boolean printToConsole;
 
     public DynamicAccessDetectionFeature() {
         this.callsBySourceEntry = new ConcurrentSkipListMap<>();
+        this.printToConsole = Options.ReportDynamicAccessToConsole.getValue();
     }
 
     public static DynamicAccessDetectionFeature instance() {
@@ -199,8 +204,10 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     public void reportDynamicAccess() {
         for (String entry : sourceEntries) {
             if (callsBySourceEntry.containsKey(entry)) {
-                printReportForEntry(entry);
                 dumpReportForEntry(entry);
+                if (printToConsole) {
+                    printReportForEntry(entry);
+                }
             }
         }
     }
