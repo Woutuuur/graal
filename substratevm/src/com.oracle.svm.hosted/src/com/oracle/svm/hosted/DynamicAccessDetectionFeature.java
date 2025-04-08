@@ -30,12 +30,18 @@ import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.option.AccumulatingLocatableMultiOptionValue;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.core.option.HostedOptionValues;
+import com.oracle.svm.core.option.LocatableMultiOptionValue;
+import com.oracle.svm.core.option.SubstrateOptionsParser;
 import com.oracle.svm.core.util.UserError;
+import com.oracle.svm.hosted.driver.IncludeOptionsSupport;
 import com.oracle.svm.hosted.phases.DynamicAccessDetectionPhase;
 import jdk.graal.compiler.options.Option;
+import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.util.json.JsonBuilder;
 import jdk.graal.compiler.util.json.JsonPrettyWriter;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
+import org.graalvm.collections.EconomicMap;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import java.io.IOException;
@@ -43,6 +49,7 @@ import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
@@ -51,6 +58,9 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import static com.oracle.svm.hosted.driver.IncludeOptionsSupport.parseIncludeSelector;
 
 /**
  * This is a support class that keeps track of dynamic access calls requiring metadata usage
@@ -95,20 +105,12 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
 
     private static final String OUTPUT_DIR_NAME = "dynamic-access";
 
-    private final Set<String> pathEntries; // Class or module path entries
-    private final Map<String, MethodsByAccessKind> callsByPathEntry;
+    private Set<String> sourceEntries; // Class path entries and module or package names
+    private final Map<String, MethodsByAccessKind> callsBySourceEntry;
     private final Set<FoldEntry> foldEntries = ConcurrentHashMap.newKeySet();
 
     public DynamicAccessDetectionFeature() {
-        this.callsByPathEntry = new ConcurrentSkipListMap<>();
-        this.pathEntries = Options.TrackDynamicAccess.getValue().values().stream()
-                .map(entry -> {
-                    if (entry.endsWith("/")) {
-                        return entry.substring(0, entry.length() - 1);
-                    }
-                    return entry;
-                })
-                .collect(Collectors.toSet());
+        this.callsBySourceEntry = new ConcurrentSkipListMap<>();
     }
 
     public static DynamicAccessDetectionFeature instance() {
@@ -116,18 +118,18 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     }
 
     public void addCall(String entry, DynamicAccessDetectionPhase.DynamicAccessKind accessKind, String call, String callLocation) {
-        MethodsByAccessKind entryContent = this.callsByPathEntry.computeIfAbsent(entry, k -> new MethodsByAccessKind());
+        MethodsByAccessKind entryContent = this.callsBySourceEntry.computeIfAbsent(entry, k -> new MethodsByAccessKind());
         CallLocationsByMethod methodCallLocations = entryContent.methodsByAccessKind().computeIfAbsent(accessKind, k -> new CallLocationsByMethod());
         List<String> callLocations = methodCallLocations.callLocationsByMethod().computeIfAbsent(call, k -> new ArrayList<>());
         callLocations.add(callLocation);
     }
 
     public MethodsByAccessKind getMethodsByAccessKind(String entry) {
-        return this.callsByPathEntry.getOrDefault(entry, new MethodsByAccessKind());
+        return this.callsBySourceEntry.getOrDefault(entry, new MethodsByAccessKind());
     }
 
-    public Set<String> getPathEntries() {
-        return pathEntries;
+    public Set<String> getSourceEntries() {
+        return sourceEntries;
     }
 
     public static String getEntryName(String path) {
@@ -195,8 +197,8 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     }
 
     public void reportDynamicAccess() {
-        for (String entry : pathEntries) {
-            if (callsByPathEntry.containsKey(entry)) {
+        for (String entry : sourceEntries) {
+            if (callsBySourceEntry.containsKey(entry)) {
                 printReportForEntry(entry);
                 dumpReportForEntry(entry);
             }
@@ -247,7 +249,37 @@ public final class DynamicAccessDetectionFeature implements InternalFeature {
     }
 
     @Override
+    public void afterRegistration(AfterRegistrationAccess access) {
+        ImageClassLoader imageClassLoader = ((FeatureImpl.AfterRegistrationAccessImpl) access).getImageClassLoader();
+        NativeImageClassLoaderSupport support = imageClassLoader.classLoaderSupport;
+        NativeImageClassLoaderSupport.IncludeSelectors dynamicAccessSelectors = support.getDynamicAccessSelectors();
+
+        this.sourceEntries = dynamicAccessSelectors.classpathEntries().stream()
+                .map(path -> path.toAbsolutePath().toString()).collect(Collectors.toSet());
+        this.sourceEntries.addAll(dynamicAccessSelectors.moduleNames());
+        this.sourceEntries.addAll(dynamicAccessSelectors.packages().stream().map(Object::toString).collect(Collectors.toSet()));
+    }
+
+    @Override
     public void beforeCompilation(BeforeCompilationAccess access) {
         DynamicAccessDetectionFeature.instance().reportDynamicAccess();
+    }
+
+    private static String dynamicAccessPossibleOptions() {
+        return "[" + IncludeOptionsSupport.possibleExtendedOptions() + "]";
+    }
+
+    public static void parseDynamicAccessOptions(EconomicMap<OptionKey<?>, Object> hostedValues, NativeImageClassLoaderSupport classLoaderSupport) {
+        AccumulatingLocatableMultiOptionValue.Strings trackDynamicAccess = Options.TrackDynamicAccess.getValue(new OptionValues(hostedValues));
+        Stream<LocatableMultiOptionValue.ValueWithOrigin<String>> valuesWithOrigins = trackDynamicAccess.getValuesWithOrigins();
+        valuesWithOrigins.forEach(valueWithOrigin -> {
+            String optionArgument = SubstrateOptionsParser.commandArgument(Options.TrackDynamicAccess, valueWithOrigin.value(), true, false);
+            var options = Arrays.stream(valueWithOrigin.value().split(",")).toList();
+            for (String option : options) {
+                UserError.guarantee(!option.isEmpty(), "Option %s from %s cannot be passed an empty string",
+                        optionArgument, valueWithOrigin.origin());
+                parseIncludeSelector(optionArgument, valueWithOrigin, classLoaderSupport.getDynamicAccessSelectors(), IncludeOptionsSupport.ExtendedOption.parse(option), dynamicAccessPossibleOptions());
+            }
+        });
     }
 }

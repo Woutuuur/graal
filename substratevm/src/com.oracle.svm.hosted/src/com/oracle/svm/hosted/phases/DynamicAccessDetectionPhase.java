@@ -62,12 +62,12 @@ import java.util.random.RandomGeneratorFactory;
 
 /**
  * This phase detects usages of dynamic access calls that might require metadata in reached parts of
- * the project. It does so by analyzing the specified class or module path entries and identifying
+ * the project. It does so by analyzing the specified class path entries, modules or packages and identifying
  * relevant accesses. The phase then outputs and serializes the detected usages to the image-build
  * output. It is an optional phase that happens before
  * {@link com.oracle.graal.pointsto.results.StrengthenGraphs} by using the
  * {@link com.oracle.svm.hosted.DynamicAccessDetectionFeature.Options#TrackDynamicAccess} option and
- * providing the desired class or module path entry/s.
+ * providing the desired source entries.
  */
 public class DynamicAccessDetectionPhase extends BasePhase<CoreProviders> {
     public enum DynamicAccessKind {
@@ -182,10 +182,10 @@ public class DynamicAccessDetectionPhase extends BasePhase<CoreProviders> {
         List<MethodCallTargetNode> callTargetNodes = graph.getNodes(MethodCallTargetNode.TYPE).snapshot();
         for (MethodCallTargetNode callTarget : callTargetNodes) {
             AnalysisType callerClass = (AnalysisType) graph.method().getDeclaringClass();
-            String entryPath = getEntryPath(callerClass);
+            String sourceEntry = getSourceEntry(callerClass);
             MethodInfo methodInfo = getMethod(callTarget);
 
-            if (methodInfo != null && entryPath != null) {
+            if (methodInfo != null && sourceEntry != null) {
                 DynamicAccessKind accessKind = methodInfo.accessKind();
                 String methodName = methodInfo.name();
 
@@ -197,7 +197,7 @@ public class DynamicAccessDetectionPhase extends BasePhase<CoreProviders> {
                     int bci = nspToShow.getBCI();
                     if (!dynamicAccessDetectionFeature.containsFoldEntry(bci, nspToShow.getMethod())) {
                         String callLocation = nspToShow.getMethod().asStackTraceElement(bci).toString();
-                        dynamicAccessDetectionFeature.addCall(entryPath, accessKind, methodName, callLocation);
+                        dynamicAccessDetectionFeature.addCall(sourceEntry, accessKind, methodName, callLocation);
                     }
                 }
             }
@@ -222,27 +222,35 @@ public class DynamicAccessDetectionPhase extends BasePhase<CoreProviders> {
     }
 
     /*
-     * Returns the class or module path entry path of the caller class if it is included in the path
+     * Returns the class path entry, module or package name of the caller class if it is included in the value
      * specified by the option, otherwise returns null.
      */
-    private static String getEntryPath(AnalysisType callerClass) {
+    private static String getSourceEntry(AnalysisType callerClass) {
         try {
             CodeSource entryPathSource = callerClass.getJavaClass().getProtectionDomain().getCodeSource();
             if (entryPathSource == null) {
                 return null;
             }
-
             URL entryPathURL = entryPathSource.getLocation();
             if (entryPathURL == null) {
                 return null;
             }
 
-            String entryPath = entryPathURL.toURI().getPath();
-            if (entryPath.endsWith("/")) {
-                entryPath = entryPath.substring(0, entryPath.length() - 1);
+            Set<String> sourceEntries = DynamicAccessDetectionFeature.instance().getSourceEntries();
+
+            String classPathEntry = entryPathURL.toURI().getPath();
+            if (sourceEntries.contains(classPathEntry)) {
+                return classPathEntry;
             }
-            if (DynamicAccessDetectionFeature.instance().getPathEntries().contains(entryPath)) {
-                return entryPath;
+
+            String moduleName = callerClass.getJavaClass().getModule().getName();
+            if (sourceEntries.contains(moduleName)) {
+                return moduleName;
+            }
+
+            String packageName = callerClass.getJavaClass().getPackageName();
+            if (sourceEntries.contains(packageName)) {
+                return packageName;
             }
             return null;
         } catch (URISyntaxException e) {
