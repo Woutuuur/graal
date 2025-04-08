@@ -80,7 +80,6 @@ import jdk.internal.misc.Unsafe;
 import jdk.vm.ci.amd64.AMD64;
 
 public class SubstrateOptions {
-
     @Option(help = "Deprecated, option no longer has any effect.", deprecated = true, deprecationMessage = "It no longer has any effect, and no replacement is available")//
     static final HostedOptionKey<Boolean> ParseOnce = new HostedOptionKey<>(true);
     @Option(help = "Deprecated, option no longer has any effect.", deprecated = true, deprecationMessage = "It no longer has any effect, and no replacement is available")//
