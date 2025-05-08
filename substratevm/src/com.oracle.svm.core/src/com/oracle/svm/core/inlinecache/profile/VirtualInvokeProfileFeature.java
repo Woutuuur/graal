@@ -28,7 +28,9 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
-        suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
+        if (Boolean.getBoolean("enableVirtualInvokeProfilingPhase")) {
+            suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
+        }
     }
 
 }
