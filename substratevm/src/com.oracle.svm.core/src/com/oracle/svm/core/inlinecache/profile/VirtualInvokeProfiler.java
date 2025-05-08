@@ -4,7 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 public class VirtualInvokeProfiler {
-    static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[10000];
+    static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[100000];
     private static volatile boolean profilingEnabled = false;
     private static volatile boolean isInProfilerContext = false;
 
@@ -13,7 +13,7 @@ public class VirtualInvokeProfiler {
     }
 
     static void profileVirtualInvoke(Object receiver, int callSiteId) {
-        if (!profilingEnabled || isInProfilerContext) {
+        if (!profilingEnabled || isInProfilerContext || receiver == null) {
             return;
         }
 
@@ -30,7 +30,9 @@ public class VirtualInvokeProfiler {
         callSiteProfile.receiverCounts.put(receiverClass, callSiteProfile.receiverCounts.getOrDefault(receiverClass, 0L) + 1);
         callSiteProfile.totalCount++;
 
-        System.out.println("Profiling virtual invoke for call site ID: " + callSiteId + " with receiver: " + receiver + " current: " + callSiteProfile.receiverCounts.get(receiverClass) + "/" +  callSiteProfile.totalCount);
+        if (callSiteProfile.totalCount % 100000000 == 0) {
+            System.out.println("Profiling virtual invoke for call site ID: " + callSiteId + " with receiver " + receiver + " current: " + callSiteProfile.receiverCounts.get(receiverClass) + "/" +  callSiteProfile.totalCount);
+        }
 
         isInProfilerContext = false;
     }
