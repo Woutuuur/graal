@@ -3,8 +3,10 @@ FROM mcr.microsoft.com/devcontainers/base:bookworm
 SHELL ["/bin/bash", "-c"]
 
 RUN apt-get update && \
-    apt-get install -y git ninja-build python3 python3-venv python3-pip maven && \
-    apt-get clean all
+    apt-get install -y git generate-ninja ninja-build python3 python3-venv python3-pip maven
+RUN apt-get clean all
+    
+#RUN apt-get install gcc g++ make musl musl-dev musl-tools libstdc++-11-dev libffi-dev libglibd-2.0-dev libbzip3-dev
 
 RUN mkdir -p /data
 
@@ -28,11 +30,15 @@ COPY .git /tmp/graal/.git
 # Fetch the JDK
 RUN ${MX_PATH}/mx -p /tmp/graal --java-home= fetch-jdk --jdk-id labsjdk-ce-latest --to /data/jdk-dl --alias ${JAVA_HOME}
 
-RUN echo "alias native-image='mx -p /workspace/graal/substratevm native-image'" >> /etc/bash.bashrc && \
+# Create some shorthands for mx commands
+RUN echo "alias aot='mx -p /workspace/graal/substratevm native-image'" >> /etc/bash.bashrc && \
     echo "alias vm='mx -p /workspace/graal/compiler vm'" >> /etc/bash.bashrc && \
-    echo "alias build-compiler='mx -p /workspace/graal/substratevm build'" >> /etc/bash.bashrc && \
+    echo "alias build-aot='mx -p /workspace/graal/substratevm build'" >> /etc/bash.bashrc && \
     echo "alias build-jvm='mx -p /workspace/graal/compiler build'" >> /etc/bash.bashrc
 
-# Cleanup
- RUN rm -rf /tmp/*
+ENV BASH_ENV="/usr/local/sdkman/bin/sdkman-init.sh"
 
+# Cleanup
+RUN rm -rf /tmp/*
+
+ENTRYPOINT ["/bin/bash", "-c"]

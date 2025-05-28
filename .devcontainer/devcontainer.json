@@ -1,18 +1,23 @@
 {
-	"name": "substratevm development",
+	"name": "Substratevm Development Environment",
 	"build": {
 		"dockerfile": "Dockerfile",
 		"context": ".."
 	},
 	"workspaceFolder": "/workspace/graal/substratevm",
 	"workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspace,type=bind,consistency=cached",
-	"onCreateCommand": "mx -p /workspace/graal/substratevm intellijinit",
 	"customizations": {
-        "jetbrains": {
-            "plugins": [
-                "Pythonid",
+		"jetbrains": {
+			"plugins": [
+				"Pythonid",
 				"PythonCore"
             ]
         }
-    }
+    },
+	"features": {
+		"ghcr.io/devcontainers/features/java:1": {
+			"version": "24-graal"
+		}
+	},
+	"onCreateCommand": "bash ../.devcontainer/onCreateCommand.sh"
 }
