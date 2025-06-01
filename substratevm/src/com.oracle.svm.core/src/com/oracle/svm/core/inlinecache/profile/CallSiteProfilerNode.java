@@ -31,7 +31,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
     @Input private ValueNode receiver;
     @Input(Value) private ValueNode callSiteIdNode;
 
-    @Input(Value) private final ValueNode sourceOrigin;
+    @Input(Value) private ValueNode sourceOrigin;
 
     private ProfilingMethod profilingMethod;
 
