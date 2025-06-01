@@ -43,27 +43,28 @@ public class VirtualInvokeProfiler {
         System.out.println("Dumping Virtual Invoke Profile Data:");
         System.out.println(
             Arrays.stream(callSiteProfiles)
-            .filter(Objects::nonNull)
-            .sorted((callSiteProfile1, callSiteProfile2) ->
-                Long.compare(callSiteProfile2.totalCount, callSiteProfile1.totalCount)
-            )
-            .map(callSiteProfile ->
-                String.format(
-                    "Callsite %d: Total Count: %d, Source: %s\n",
+                .filter(Objects::nonNull)
+                .sorted((callSiteProfile1, callSiteProfile2) -> Long.compare(
+                    callSiteProfile2.totalCount,
+                    callSiteProfile1.totalCount
+                ))
+                .map(callSiteProfile -> String.format(
+                    "Callsite %d: Total Count: %d, Source: %s\n%s",
                     Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
                     callSiteProfile.totalCount,
-                    callSiteProfile.source
-                ) + callSiteProfile.receiverCounts.entrySet().stream()
-                    .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
-                    .map(entry -> String.format(
-                        "Receiver Class: %s, Count: %d (%.2f%%)",
-                        entry.getKey().getName(),
-                        entry.getValue(),
-                        (entry.getValue() * 100.0) / callSiteProfile.totalCount)
+                    callSiteProfile.source,
+                    callSiteProfile.receiverCounts.entrySet().stream()
+                        .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                        .map(entry -> String.format(
+                            "Receiver Class: %s, Count: %d (%.2f%%)",
+                            entry.getKey().getName(),
+                            entry.getValue(),
+                            (entry.getValue() * 100.0) / callSiteProfile.totalCount)
+                        )
+                        .collect(Collectors.joining("\n")
                     )
-                    .collect(Collectors.joining("\n"))
-            )
-            .collect(Collectors.joining("\n\n"))
+                ))
+                .collect(Collectors.joining("\n\n"))
         );
     }
 
