@@ -35,6 +35,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 
+import com.oracle.svm.core.inlinecache.profile.VirtualInvokeProfiler;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Isolate;
@@ -173,6 +174,8 @@ public class JavaMainWrapper {
             preMainSupport.invokePremain();
         }
 
+        VirtualInvokeProfiler.enableProfiling();
+
         JavaMainSupport javaMainSupport = ImageSingletons.lookup(JavaMainSupport.class);
         if (javaMainSupport.mainNonstatic) {
             Object instance = javaMainSupport.javaMainClassCtorHandle.invoke();
@@ -189,6 +192,8 @@ public class JavaMainWrapper {
                 javaMainSupport.javaMainHandle.invokeExact(mainArgs);
             }
         }
+
+        VirtualInvokeProfiler.dumpProfileData();
     }
 
     /**

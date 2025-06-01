@@ -1,19 +1,23 @@
 package com.oracle.svm.core.inlinecache.profile;
 
+import java.util.Arrays;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
 
 public class VirtualInvokeProfiler {
     static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[100000];
-    private static volatile boolean profilingEnabled = false;
-    private static volatile boolean isInProfilerContext = false;
+    private static boolean profilingEnabled = false;
+    private static boolean isInProfilerContext = false;
 
     public static void enableProfiling() {
         profilingEnabled = true;
     }
 
-    static void profileVirtualInvoke(Object receiver, int callSiteId) {
-        if (!profilingEnabled || isInProfilerContext || receiver == null) {
+    static void profileVirtualInvoke(String source, Object receiver, int callSiteId) {
+        if (!profilingEnabled || isInProfilerContext) {
             return;
         }
 
@@ -22,7 +26,7 @@ public class VirtualInvokeProfiler {
         CallSiteProfile callSiteProfile = callSiteProfiles[callSiteId];
 
         if (callSiteProfile == null) {
-            callSiteProfile = new CallSiteProfile();
+            callSiteProfile = new CallSiteProfile(source);
             callSiteProfiles[callSiteId] = callSiteProfile;
         }
 
@@ -30,21 +34,48 @@ public class VirtualInvokeProfiler {
         callSiteProfile.receiverCounts.put(receiverClass, callSiteProfile.receiverCounts.getOrDefault(receiverClass, 0L) + 1);
         callSiteProfile.totalCount++;
 
-        if (callSiteProfile.totalCount % 100000000 == 0) {
-            System.out.println("Profiling virtual invoke for call site ID: " + callSiteId + " with receiver " + receiver + " current: " + callSiteProfile.receiverCounts.get(receiverClass) + "/" +  callSiteProfile.totalCount);
-        }
-
         isInProfilerContext = false;
+    }
+
+    public static void dumpProfileData() {
+        isInProfilerContext = true;
+
+        System.out.println("Dumping Virtual Invoke Profile Data:");
+        System.out.println(
+            Arrays.stream(callSiteProfiles)
+            .filter(Objects::nonNull)
+            .sorted((callSiteProfile1, callSiteProfile2) ->
+                Long.compare(callSiteProfile2.totalCount, callSiteProfile1.totalCount)
+            )
+            .map(callSiteProfile ->
+                String.format(
+                    "Callsite %d: Total Count: %d, Source: %s\n",
+                    Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
+                    callSiteProfile.totalCount,
+                    callSiteProfile.source
+                ) + callSiteProfile.receiverCounts.entrySet().stream()
+                    .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                    .map(entry -> String.format(
+                        "Receiver Class: %s, Count: %d (%.2f%%)",
+                        entry.getKey().getName(),
+                        entry.getValue(),
+                        (entry.getValue() * 100.0) / callSiteProfile.totalCount)
+                    )
+                    .collect(Collectors.joining("\n"))
+            )
+            .collect(Collectors.joining("\n\n"))
+        );
     }
 
     private static class CallSiteProfile {
         long totalCount;
         Map<Class<?>, Long> receiverCounts;
+        String source;
 
-        public CallSiteProfile() {
+        public CallSiteProfile(String source) {
             this.totalCount = 0;
             this.receiverCounts = new HashMap<>();
-
+            this.source = source;
         }
     }
 }
