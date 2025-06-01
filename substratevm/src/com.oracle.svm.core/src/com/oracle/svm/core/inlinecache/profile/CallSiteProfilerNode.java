@@ -58,27 +58,27 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
 
         ValueNode[] args = {sourceOrigin, receiver, callSiteIdNode};
         CallTargetNode profilerCallTargetNode = graph.add(new MethodCallTargetNode(
-                InvokeKind.Static,
-                profilingMethod.getMethod(),
-                args,
-                StampPair.createSingle(StampFactory.forVoid()),
-                null
+            InvokeKind.Static,
+            profilingMethod.getMethod(),
+            args,
+            StampPair.createSingle(StampFactory.forVoid()),
+            null
         ));
 
         InvokeNode invokeToProfiler = graph.add(new InvokeNode(profilerCallTargetNode,0));
 
         FrameState stateAfter = graph.add(new FrameState(
-                null,
-                profilingMethod.getByteCode(),
-                0,
-                ValueNode.EMPTY_ARRAY,
-                ValueNode.EMPTY_ARRAY,
-                0,
-                null,
-                null,
-                ValueNode.EMPTY_ARRAY,
-                null,
-                FrameState.StackState.AfterPop
+            null,
+            profilingMethod.getByteCode(),
+            0,
+            ValueNode.EMPTY_ARRAY,
+            ValueNode.EMPTY_ARRAY,
+            0,
+            null,
+            null,
+            ValueNode.EMPTY_ARRAY,
+            null,
+            FrameState.StackState.AfterPop
         ));
 
         invokeToProfiler.setStateAfter(stateAfter);

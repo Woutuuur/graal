@@ -16,8 +16,10 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
+        System.out.println("\n\n\nRegistering feature\n\n\n");
+
         try {
-            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", Object.class, int.class);
+            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", String.class, Object.class, int.class);
             Method m2 = VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling");
             RuntimeReflection.register(m, m2);
         } catch (NoSuchMethodException ex) {
@@ -29,6 +31,7 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
         if (Boolean.getBoolean("enableVirtualInvokeProfilingPhase")) {
+            System.out.println("\n\n\nRegistering virtualInvokeProfilingPhase\n\n\n");
             suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
         }
     }

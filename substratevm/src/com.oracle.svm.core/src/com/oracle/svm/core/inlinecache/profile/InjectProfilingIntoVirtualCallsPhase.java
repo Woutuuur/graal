@@ -14,7 +14,7 @@ import java.util.stream.StreamSupport;
 public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierContext> {
 
     private static final String[] EXCLUDED_PACKAGES = {
-            "com.oracle.svm.core",
+        "com.oracle.svm.core",
     };
 
     private static boolean shouldProfileInvoke(Invoke invoke) {
@@ -41,9 +41,9 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
                 ConstantNode sourceOriginConstant = ConstantNode.forConstant(context.getConstantReflection().forString(sourceOrigin), context.getMetaAccess());
                 CallSiteProfilerNode callSiteProfilerNode = graph.add(new CallSiteProfilerNode(
-                        graph.unique(sourceOriginConstant),
-                        invoke.callTarget().arguments().getFirst(),
-                        graph.unique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
+                    graph.unique(sourceOriginConstant),
+                    invoke.callTarget().arguments().getFirst(),
+                    graph.unique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
                 ));
                 graph.addBeforeFixed(invoke.asFixedNode(), callSiteProfilerNode);
             });
