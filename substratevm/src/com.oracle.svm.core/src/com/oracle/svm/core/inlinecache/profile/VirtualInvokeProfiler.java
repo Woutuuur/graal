@@ -44,11 +44,11 @@ public class VirtualInvokeProfiler {
         System.out.println(
             Arrays.stream(callSiteProfiles)
                 .filter(Objects::nonNull)
+                .filter(callSiteProfile -> callSiteProfile.receiverCounts.size() >= 2 && callSiteProfile.totalCount >= 10000)
                 .sorted((callSiteProfile1, callSiteProfile2) -> Long.compare(
                     callSiteProfile2.totalCount,
                     callSiteProfile1.totalCount
                 ))
-                .filter(callSiteProfile -> callSiteProfile.receiverCounts.size() >= 2 && callSiteProfile.totalCount >= 10000)
                 .limit(100)
                 .map(callSiteProfile -> String.format(
                     "Callsite %d: Total Count: %d, Source: %s\n%s",
