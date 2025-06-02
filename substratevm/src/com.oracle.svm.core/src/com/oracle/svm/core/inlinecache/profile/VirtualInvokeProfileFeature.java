@@ -2,6 +2,7 @@ package com.oracle.svm.core.inlinecache.profile;
 
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
+import com.oracle.svm.core.jdk.RuntimeSupport;
 import jdk.graal.compiler.phases.tiers.Suites;
 import jdk.graal.compiler.phases.util.Providers;
 import org.graalvm.nativeimage.Platforms;
@@ -16,7 +17,8 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
-        System.out.println("\n\n\nRegistering feature\n\n\n");
+        RuntimeSupport.getRuntimeSupport().addStartupHook(new VirtualInvokeProfilerHook.StartupHook());
+        RuntimeSupport.getRuntimeSupport().addShutdownHook(new VirtualInvokeProfilerHook.ShutdownHook());
 
         try {
             Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", String.class, Object.class, int.class);
@@ -31,7 +33,6 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
         if (Boolean.getBoolean("enableVirtualInvokeProfilingPhase")) {
-            System.out.println("\n\n\nRegistering virtualInvokeProfilingPhase\n\n\n");
             suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
         }
     }
