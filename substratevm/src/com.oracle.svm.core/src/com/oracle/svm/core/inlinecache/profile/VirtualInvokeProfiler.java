@@ -48,6 +48,8 @@ public class VirtualInvokeProfiler {
                     callSiteProfile2.totalCount,
                     callSiteProfile1.totalCount
                 ))
+                .filter(callSiteProfile -> callSiteProfile.receiverCounts.size() >= 2 && callSiteProfile.totalCount >= 10000)
+                .limit(100)
                 .map(callSiteProfile -> String.format(
                     "Callsite %d: Total Count: %d, Source: %s\n%s",
                     Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
@@ -55,6 +57,7 @@ public class VirtualInvokeProfiler {
                     callSiteProfile.source,
                     callSiteProfile.receiverCounts.entrySet().stream()
                         .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                        .limit(25)
                         .map(entry -> String.format(
                             "Receiver Class: %s, Count: %d (%.2f%%)",
                             entry.getKey().getName(),
