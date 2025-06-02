@@ -174,8 +174,6 @@ public class JavaMainWrapper {
             preMainSupport.invokePremain();
         }
 
-        VirtualInvokeProfiler.enableProfiling();
-
         JavaMainSupport javaMainSupport = ImageSingletons.lookup(JavaMainSupport.class);
         if (javaMainSupport.mainNonstatic) {
             Object instance = javaMainSupport.javaMainClassCtorHandle.invoke();
@@ -193,7 +191,6 @@ public class JavaMainWrapper {
             }
         }
 
-        VirtualInvokeProfiler.dumpProfileData();
     }
 
     /**
