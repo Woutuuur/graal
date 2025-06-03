@@ -27,7 +27,7 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
-        StreamSupport.stream(graph.getInvokes().spliterator(), true)
+        StreamSupport.stream(graph.getInvokes().spliterator(), false)
             .filter(InjectProfilingIntoVirtualCallsPhase::shouldProfileInvoke)
             .forEach(invoke -> {
                 ResolvedJavaType declaringClass = invoke.getContextMethod().getDeclaringClass();
@@ -41,9 +41,9 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
                 ConstantNode sourceOriginConstant = ConstantNode.forConstant(context.getConstantReflection().forString(sourceOrigin), context.getMetaAccess());
                 CallSiteProfilerNode callSiteProfilerNode = graph.add(new CallSiteProfilerNode(
-                    graph.unique(sourceOriginConstant),
+                    graph.addOrUnique(sourceOriginConstant),
                     invoke.callTarget().arguments().getFirst(),
-                    graph.unique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
+                    graph.addOrUnique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
                 ));
                 graph.addBeforeFixed(invoke.asFixedNode(), callSiteProfilerNode);
             });
