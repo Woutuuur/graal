@@ -2,7 +2,11 @@
 	"name": "Substratevm Development Environment",
 	"build": {
 		"dockerfile": "Dockerfile",
-		"context": ".."
+		"context": "..",
+		"args": {
+			"MX_BRANCH": "release/graal-vm/24.2",
+			"DACAPO_VERSION": "23.11-MR2-chopin"
+		}
 	},
 	"workspaceFolder": "/workspace/graal/substratevm",
 	"workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspace,type=bind,consistency=cached",
