@@ -3,10 +3,8 @@ FROM mcr.microsoft.com/devcontainers/base:bookworm
 SHELL ["/bin/bash", "-c"]
 
 RUN apt-get update && \
-    apt-get install -y git generate-ninja ninja-build python3 python3-venv python3-pip maven
+    apt-get install -y git generate-ninja ninja-build python3 python3-venv python3-pip maven gdb
 RUN apt-get clean all
-    
-#RUN apt-get install gcc g++ make musl musl-dev musl-tools libstdc++-11-dev libffi-dev libglibd-2.0-dev libbzip3-dev
 
 RUN mkdir -p /data
 
