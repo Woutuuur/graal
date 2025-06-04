@@ -1,5 +1,9 @@
 package com.oracle.svm.core.inlinecache.profile;
 
+import com.oracle.svm.core.NeverInline;
+import com.oracle.svm.core.snippets.KnownIntrinsics;
+import org.graalvm.nativeimage.c.function.CodePointer;
+
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -16,6 +20,7 @@ public class VirtualInvokeProfiler {
         profilingEnabled = true;
     }
 
+    @NeverInline("Safe return address retrieval")
     static void profileVirtualInvoke(String source, Object receiver, int callSiteId) {
         if (!profilingEnabled || isInProfilerContext) {
             return;
@@ -26,7 +31,7 @@ public class VirtualInvokeProfiler {
         CallSiteProfile callSiteProfile = callSiteProfiles[callSiteId];
 
         if (callSiteProfile == null) {
-            callSiteProfile = new CallSiteProfile(source);
+            callSiteProfile = new CallSiteProfile(source, KnownIntrinsics.readReturnAddress());
             callSiteProfiles[callSiteId] = callSiteProfile;
         }
 
@@ -51,9 +56,10 @@ public class VirtualInvokeProfiler {
                 ))
                 .limit(100)
                 .map(callSiteProfile -> String.format(
-                    "Callsite %d: Total Count: %d, Source: %s\n%s",
+                    "Callsite %d: Total Count: %d, Approx. address: 0x%x, Source: %s\n%s",
                     Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
                     callSiteProfile.totalCount,
+                    callSiteProfile.sourceCodePointer.rawValue(),
                     callSiteProfile.source,
                     callSiteProfile.receiverCounts.entrySet().stream()
                         .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
@@ -75,11 +81,13 @@ public class VirtualInvokeProfiler {
         long totalCount;
         Map<Class<?>, Long> receiverCounts;
         String source;
+        CodePointer sourceCodePointer;
 
-        public CallSiteProfile(String source) {
+        public CallSiteProfile(String source, CodePointer sourceCodePointer) {
             this.totalCount = 0;
             this.receiverCounts = new HashMap<>();
             this.source = source;
+            this.sourceCodePointer = sourceCodePointer;
         }
     }
 }
