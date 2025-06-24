@@ -1,4 +1,4 @@
-package com.oracle.svm.core.inlinecache.profile;
+package com.oracle.svm.hosted.profile;
 
 import java.util.concurrent.atomic.AtomicInteger;
 

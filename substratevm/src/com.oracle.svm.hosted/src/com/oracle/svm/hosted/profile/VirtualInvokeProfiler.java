@@ -1,4 +1,4 @@
-package com.oracle.svm.core.inlinecache.profile;
+package com.oracle.svm.hosted.profile;
 
 import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
@@ -18,6 +18,14 @@ public class VirtualInvokeProfiler {
 
     public static void enableProfiling() {
         profilingEnabled = true;
+    }
+
+    static void foo() {
+        System.out.println("foo");
+    }
+
+    static void bar() {
+        System.out.println("bar");
     }
 
     @NeverInline("Safe return address retrieval")
@@ -68,8 +76,8 @@ public class VirtualInvokeProfiler {
                             "Receiver Class: %s, Count: %d (%.2f%%)",
                             entry.getKey().getName(),
                             entry.getValue(),
-                            (entry.getValue() * 100.0) / callSiteProfile.totalCount)
-                        )
+                            (entry.getValue() * 100.0) / callSiteProfile.totalCount
+                        ))
                         .collect(Collectors.joining("\n")
                     )
                 ))

@@ -1,4 +1,4 @@
-package com.oracle.svm.core.inlinecache.profile;
+package com.oracle.svm.hosted.profile;
 
 import jdk.graal.compiler.bytecode.ResolvedJavaMethodBytecode;
 import jdk.graal.compiler.core.common.type.StampFactory;
@@ -53,7 +53,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
         StructuredGraph graph = graph();
 
         if (profilingMethod == null) {
-            profilingMethod =  new ProfilingMethod(tool.getMetaAccess());
+            profilingMethod = new ProfilingMethod(tool.getMetaAccess());
         }
 
         ValueNode[] args = {sourceOrigin, receiver, callSiteIdNode};
