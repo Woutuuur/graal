@@ -71,17 +71,17 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
             stack = new ValueNode[]{invoke};
         }
         FrameState stateAfter = graph.add(new FrameState(
-                null,
-                new ResolvedJavaMethodBytecode(method),
-                0,
-                ValueNode.EMPTY_ARRAY,
-                stack,
-                stack.length,
-                null,
-                null,
-                ValueNode.EMPTY_ARRAY,
-                null,
-                FrameState.StackState.AfterPop
+            null,
+            new ResolvedJavaMethodBytecode(method),
+            0,
+            ValueNode.EMPTY_ARRAY,
+            stack,
+            stack.length,
+            null,
+            null,
+            ValueNode.EMPTY_ARRAY,
+            null,
+            FrameState.StackState.AfterPop
         ));
         invoke.setStateAfter(stateAfter);
         return invoke;
@@ -140,8 +140,6 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
                             invokeToImplementation.setNext(cachedBranchEnd);
                             invokeNode.setNext(slowPathEnd);
-
-//                            FrameState frameState = invokeNode.stateAfter();
 
                             if (!returnStamp.equals(StampFactory.forVoid())) {
                                 PhiNode phi = graph.addOrUnique(new ValuePhiNode(returnStamp, mergeNode));
