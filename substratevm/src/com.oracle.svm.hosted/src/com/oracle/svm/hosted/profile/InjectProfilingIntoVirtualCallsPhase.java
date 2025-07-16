@@ -14,6 +14,7 @@ import jdk.graal.compiler.nodes.FixedNode;
 import jdk.graal.compiler.nodes.FixedWithNextNode;
 import jdk.graal.compiler.nodes.FrameState;
 import jdk.graal.compiler.nodes.IfNode;
+import jdk.graal.compiler.nodes.Invokable;
 import jdk.graal.compiler.nodes.Invoke;
 import jdk.graal.compiler.nodes.InvokeNode;
 import jdk.graal.compiler.nodes.MergeNode;
@@ -26,6 +27,7 @@ import jdk.graal.compiler.nodes.java.InstanceOfNode;
 import jdk.graal.compiler.nodes.java.MethodCallTargetNode;
 import jdk.graal.compiler.phases.BasePhase;
 import jdk.graal.compiler.phases.tiers.HighTierContext;
+import jdk.vm.ci.meta.LineNumberTable;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 
 import java.util.Arrays;
@@ -97,7 +99,7 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
             .forEach(invokeNode -> {
                 HostedMethod targetMethod = (HostedMethod) invokeNode.getTargetMethod();
 
-                if (targetMethod.getName().equals("foo")) {
+                if (false) {
                     targetMethod.wrapped.collectMethodImplementations(false)
                         .stream()
                         .findAny()
@@ -166,16 +168,43 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
                             handledInvokes.add(invokeToImplementation);
                         }, () -> System.out.println("No implementation found for " + targetMethod));
                 } else {
-                    String sourceOrigin = String.format(targetMethod.getDeclaringClass().getSourceFileName(), "%H.%n(%p)");
-                    ConstantNode sourceOriginConstant = ConstantNode.forConstant(context.getConstantReflection().forString(sourceOrigin), context.getMetaAccess());
+                    String callSiteSource = getSource(invokeNode);
+                    ConstantNode callSiteSourceConstant = ConstantNode.forConstant(context.getConstantReflection().forString(callSiteSource), context.getMetaAccess());
+
+                    String targetMethodName = invokeNode.callTarget().targetName();
+                    ConstantNode targetMethodNameConstant = ConstantNode.forConstant(context.getConstantReflection().forString(targetMethodName), context.getMetaAccess());
+
+
                     CallSiteProfilerNode callSiteProfilerNode = graph.add(new CallSiteProfilerNode(
-                            graph.addOrUnique(sourceOriginConstant),
+                            graph.addOrUnique(callSiteSourceConstant),
+                            graph.addOrUnique(targetMethodNameConstant),
                             invokeNode.callTarget().arguments().getFirst(),
                             graph.addOrUnique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
                     ));
                     graph.addBeforeFixed(invokeNode.asFixedNode(), callSiteProfilerNode);
                 }
             });
+    }
+
+    private static String getSource(Invokable invokeNode) {
+        String sourceOrigin = null;
+
+        ResolvedJavaMethod callerMethod = invokeNode.getContextMethod();
+
+        try {
+            LineNumberTable lineNumberTable = callerMethod.getLineNumberTable();
+
+            if (lineNumberTable != null) {
+                int lineNumber = lineNumberTable.getLineNumber(invokeNode.bci());
+                String fileName = callerMethod.getDeclaringClass().getSourceFileName();
+
+                sourceOrigin = String.format("%s:%d", fileName, lineNumber);
+            }
+        } catch (Throwable ignored) {
+            sourceOrigin = "Unknown";
+        }
+
+        return sourceOrigin;
     }
 
 }

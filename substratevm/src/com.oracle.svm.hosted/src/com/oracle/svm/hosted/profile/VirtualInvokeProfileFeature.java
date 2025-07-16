@@ -18,7 +18,10 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     @Override
     public void duringSetup(DuringSetupAccess access) {
         try {
-            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", String.class, Object.class, int.class);
+            RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
+            RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
+
+            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", String.class, String.class, Object.class, int.class);
             Method m2 = VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling");
             Method foo = VirtualInvokeProfiler.class.getDeclaredMethod("foo");
             Method bar = VirtualInvokeProfiler.class.getDeclaredMethod("bar");
@@ -33,20 +36,6 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
         if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
             suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
-
-            RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
-            RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
-            RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> {
-                try {
-                    Class<?> clasz = Class.forName("org.h2.result.SearchRow");
-                    System.out.println("Methods of SearchRow:");
-                    for (var m : clasz.getFields()) {
-                        System.out.println(m);
-                    }
-                } catch (ClassNotFoundException e) {
-                    throw new RuntimeException("Failed to register class for reflection: " + e.getMessage(), e);
-                }
-            });
         }
     }
 
