@@ -110,27 +110,4 @@ public class VirtualInvokeProfiler {
             e.printStackTrace();
         }
     }
-
-    private static class CallSiteProfile {
-        long totalCount;
-        Map<Class<?>, Long> receiverCounts;
-        String source;
-        String targetMethod;
-        CodePointer sourceCodePointer;
-
-        private List<Map.Entry<Class<?>, Long>> getTopReceiverClasses(int limit) {
-            return receiverCounts.entrySet().stream()
-                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
-                .limit(limit)
-                .collect(Collectors.toList());
-        }
-
-        public CallSiteProfile(String source, String targetMethod, CodePointer sourceCodePointer) {
-            this.totalCount = 0;
-            this.receiverCounts = new HashMap<>();
-            this.source = source;
-            this.sourceCodePointer = sourceCodePointer;
-            this.targetMethod = targetMethod;
-        }
-    }
 }
