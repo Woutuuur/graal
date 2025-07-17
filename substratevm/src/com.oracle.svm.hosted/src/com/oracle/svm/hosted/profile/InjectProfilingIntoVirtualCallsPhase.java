@@ -30,8 +30,11 @@ import jdk.graal.compiler.phases.tiers.HighTierContext;
 import jdk.vm.ci.meta.LineNumberTable;
 import jdk.vm.ci.meta.ResolvedJavaMethod;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.StreamSupport;
 
@@ -92,6 +95,19 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
         Set<Invoke> handledInvokes = new HashSet<>();
+
+        String profileDataDumpFileName = VirtualInvokeProfileFeature.Options.ProfileDataDumpFileName.getValue(graph.getOptions());
+        if (profileDataDumpFileName != null) {
+            Path jsonFilePath = Path.of(profileDataDumpFileName);
+            try {
+                String json = Files.readString(jsonFilePath);
+                List<CallSiteProfile> callSiteProfiles = CallSiteProfile.loadFromJSON(json);
+
+                // TODO: Use the loaded profiles to handle inlining decisions
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
 
         StreamSupport.stream(graph.getInvokes().spliterator(), false)
             .filter(InjectProfilingIntoVirtualCallsPhase::shouldProfileInvoke)
@@ -173,7 +189,6 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
                     String targetMethodName = invokeNode.callTarget().targetName();
                     ConstantNode targetMethodNameConstant = ConstantNode.forConstant(context.getConstantReflection().forString(targetMethodName), context.getMetaAccess());
-
 
                     CallSiteProfilerNode callSiteProfilerNode = graph.add(new CallSiteProfilerNode(
                             graph.addOrUnique(callSiteSourceConstant),

@@ -3,6 +3,9 @@ package com.oracle.svm.hosted.profile;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.RuntimeSupport;
+import jdk.graal.compiler.options.Option;
+import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.tiers.Suites;
 import jdk.graal.compiler.phases.util.Providers;
 import org.graalvm.nativeimage.Platforms;
@@ -10,10 +13,20 @@ import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
 public class VirtualInvokeProfileFeature implements InternalFeature  {
+
+    public static class Options {
+
+        // @formatter:off
+        @Option(help = "File containing profiling data for PGO based inlining", type = OptionType.User)
+        public static final OptionKey<String> ProfileDataDumpFileName = new OptionKey<>(null);
+        // @formatter:on
+    }
 
     @Override
     public void duringSetup(DuringSetupAccess access) {

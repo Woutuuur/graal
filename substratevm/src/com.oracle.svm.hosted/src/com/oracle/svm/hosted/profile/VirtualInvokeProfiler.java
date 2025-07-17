@@ -44,8 +44,8 @@ public class VirtualInvokeProfiler {
             callSiteProfiles[callSiteId] = callSiteProfile;
         }
 
-        Class<?> receiverClass = receiver.getClass();
-        callSiteProfile.receiverCounts.put(receiverClass, callSiteProfile.receiverCounts.getOrDefault(receiverClass, 0L) + 1);
+        String receiverClassName = receiver.getClass().getName();
+        callSiteProfile.receiverCounts.put(receiverClassName, callSiteProfile.receiverCounts.getOrDefault(receiverClassName, 0L) + 1);
         callSiteProfile.totalCount++;
 
         isInProfilerContext = false;
@@ -77,7 +77,7 @@ public class VirtualInvokeProfiler {
                 callSiteProfile.getTopReceiverClasses(25).stream()
                     .map(entry -> String.format(
                         "Receiver Class: %s, Count: %d (%.2f%%)",
-                        entry.getKey().getName(),
+                        entry.getKey(),
                         entry.getValue(),
                         (entry.getValue() * 100.0) / callSiteProfile.totalCount
                     ))
@@ -89,23 +89,24 @@ public class VirtualInvokeProfiler {
 
         System.out.println("Dumping virtual invoke profile data...");
         try (java.io.FileWriter fileWriter = new java.io.FileWriter("profiler-data.json")) {
-            fileWriter.write("[\n");
-            String jsonData = relevantProfiles.stream()
-                .map(callSiteProfile -> String.format(
-                    "  {\n    \"callsiteId\": %d,\n    \"targetMethod\": %s,\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"approxAddress\": \"0x%x\",\n    \"source\": \"%s\",\n    \"receiverCounts\": {\n%s\n    }\n  }",
-                    Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
-                    callSiteProfile.targetMethod,
-                    callSiteProfile.totalCount,
-                    callSiteProfile.receiverCounts.size(),
-                    callSiteProfile.sourceCodePointer.rawValue(),
-                    callSiteProfile.source,
-                    callSiteProfile.getTopReceiverClasses(999999).stream()
-                        .map(entry -> String.format("      \"%s\": %d", entry.getKey().getName(), entry.getValue()))
-                        .collect(Collectors.joining(",\n"))
-                ))
-                .collect(Collectors.joining(",\n"));
-            fileWriter.write(jsonData);
-            fileWriter.write("\n]\n");
+//            fileWriter.write("[\n");
+//            String jsonData = relevantProfiles.stream()
+//                .map(callSiteProfile -> String.format(
+//                    "  {\n    \"callsiteId\": %d,\n    \"targetMethod\": %s,\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"approxAddress\": \"0x%x\",\n    \"source\": \"%s\",\n    \"receiverCounts\": {\n%s\n    }\n  }",
+//                    Arrays.asList(callSiteProfiles).indexOf(callSiteProfile),
+//                    callSiteProfile.targetMethod,
+//                    callSiteProfile.totalCount,
+//                    callSiteProfile.receiverCounts.size(),
+//                    callSiteProfile.sourceCodePointer.rawValue(),
+//                    callSiteProfile.source,
+//                    callSiteProfile.getTopReceiverClasses(999999).stream()
+//                        .map(entry -> String.format("      \"%s\": %d", entry.getKey().getName(), entry.getValue()))
+//                        .collect(Collectors.joining(",\n"))
+//                ))
+//                .collect(Collectors.joining(",\n"));
+//            fileWriter.write(jsonData);
+//            fileWriter.write("\n]\n");
+            fileWriter.write(CallSiteProfile.toJSON(relevantProfiles));
         } catch (java.io.IOException e) {
             e.printStackTrace();
         }
