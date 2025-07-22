@@ -3,8 +3,8 @@ package com.oracle.svm.hosted.profile;
 import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.RuntimeSupport;
+import com.oracle.svm.core.option.HostedOptionKey;
 import jdk.graal.compiler.options.Option;
-import jdk.graal.compiler.options.OptionKey;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.tiers.Suites;
 import jdk.graal.compiler.phases.util.Providers;
@@ -24,7 +24,7 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
         // @formatter:off
         @Option(help = "File containing profiling data for PGO based inlining", type = OptionType.User)
-        public static final OptionKey<String> ProfileDataDumpFileName = new OptionKey<>(null);
+        public static final HostedOptionKey<String> ProfileDataDumpFileName = new HostedOptionKey<>(null);
         // @formatter:on
     }
 
@@ -34,7 +34,7 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
             RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
             RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
 
-            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", String.class, String.class, Object.class, int.class);
+            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class);
             Method m2 = VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling");
             Method foo = VirtualInvokeProfiler.class.getDeclaredMethod("foo");
             Method bar = VirtualInvokeProfiler.class.getDeclaredMethod("bar");

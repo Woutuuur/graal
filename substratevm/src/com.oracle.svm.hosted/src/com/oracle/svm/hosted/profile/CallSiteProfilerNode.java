@@ -29,14 +29,16 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
     public static final NodeClass<CallSiteProfilerNode> TYPE = NodeClass.create(CallSiteProfilerNode.class);
 
     @Input private ValueNode receiver;
+    @Input(Value) private ValueNode isDirect;
     @Input(Value) private ValueNode callSiteIdNode;
     @Input(Value) private ValueNode sourceOrigin;
     @Input(Value) private ValueNode targetMethod;
 
     private ProfilingMethod profilingMethod;
 
-    public CallSiteProfilerNode(ValueNode sourceOrigin, ValueNode targetMethod, ValueNode receiver, ValueNode callSiteIdNode) {
+    public CallSiteProfilerNode(ValueNode isDirect, ValueNode sourceOrigin, ValueNode targetMethod, ValueNode receiver, ValueNode callSiteIdNode) {
         super(TYPE, StampFactory.forVoid());
+        this.isDirect = isDirect;
         this.sourceOrigin = sourceOrigin;
         this.targetMethod = targetMethod;
         this.receiver = receiver;
@@ -57,7 +59,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
             profilingMethod = new ProfilingMethod(tool.getMetaAccess());
         }
 
-        ValueNode[] args = {sourceOrigin, targetMethod, receiver, callSiteIdNode};
+        ValueNode[] args = {isDirect, sourceOrigin, targetMethod, receiver, callSiteIdNode};
         CallTargetNode profilerCallTargetNode = graph.add(new MethodCallTargetNode(
             InvokeKind.Static,
             profilingMethod.getMethod(),
@@ -91,7 +93,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
         private final ResolvedJavaMethodBytecode byteCode;
 
         public ProfilingMethod(MetaAccessProvider metaAccess) {
-            Method profilingMethod = lookupMethod(VirtualInvokeProfiler.class, "profileVirtualInvoke", String.class, String.class, Object.class, int.class);
+            Method profilingMethod = lookupMethod(VirtualInvokeProfiler.class, "profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class);
 
             this.method = metaAccess.lookupJavaMethod(profilingMethod);
             this.byteCode = new ResolvedJavaMethodBytecode(method);

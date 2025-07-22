@@ -35,7 +35,6 @@ import java.util.Collections;
 import java.util.List;
 import java.util.function.BooleanSupplier;
 
-import com.oracle.svm.core.inlinecache.profile.VirtualInvokeProfiler;
 import org.graalvm.nativeimage.CurrentIsolate;
 import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.Isolate;

@@ -10,6 +10,7 @@ import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 public class CallSiteProfile {
     long totalCount;
@@ -17,12 +18,21 @@ public class CallSiteProfile {
     String source;
     String targetMethod;
     CodePointer sourceCodePointer;
+    boolean isDirectCall;
 
-    protected List<Map.Entry<String, Long>> getTopReceiverClasses(int limit) {
-        return receiverCounts.entrySet().stream()
-            .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
-            .limit(limit)
-            .collect(Collectors.toList());
+    public String getSource() {
+        return source;
+    }
+
+    public String getTargetMethod() {
+        return targetMethod;
+    }
+
+    protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
+        Stream<Map.Entry<String, Long>> receiverStream = receiverCounts.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()));
+        Stream<Map.Entry<String, Long>> resultStream = limit == null ? receiverStream : receiverStream.limit(limit);
+        return resultStream.collect(Collectors.toList());
     }
 
     public static List<CallSiteProfile> loadFromJSON(String json) {
@@ -33,15 +43,17 @@ public class CallSiteProfile {
             "\"uniqueCallsites\":\\s*\\d+,\\s*" +
             "\"approxAddress\":\\s*\"(0x[0-9a-fA-F]+)\",\\s*" +
             "\"source\":\\s*\"([^\"]+)\",\\s*" +
+            "\"isDirectCall\":\\s*(true|false),\\s*" +
             "\"receiverCounts\":\\s*\\{([^}]*)}\\s*}");
         Matcher matcher = pattern.matcher(json);
         while (matcher.find()) {
             String targetMethod = matcher.group(1);
             long totalCount = Long.parseLong(matcher.group(2));
             String source = matcher.group(4);
+            boolean isDirectCall = Boolean.parseBoolean(matcher.group(5));
 
             Map<String, Long> receiverCounts = new HashMap<>();
-            String receiverCountsStr = matcher.group(5);
+            String receiverCountsStr = matcher.group(6);
             Pattern receiverPattern = Pattern.compile("\"([^\"]+)\":\\s*(\\d+)");
             Matcher receiverMatcher = receiverPattern.matcher(receiverCountsStr);
             while (receiverMatcher.find()) {
@@ -50,7 +62,7 @@ public class CallSiteProfile {
                 receiverCounts.put(receiverClassName, count);
             }
 
-            CallSiteProfile profile = new CallSiteProfile(totalCount, receiverCounts, source, targetMethod);
+            CallSiteProfile profile = new CallSiteProfile(totalCount, receiverCounts, source, targetMethod, isDirectCall);
             profiles.add(profile);
         }
 
@@ -58,34 +70,41 @@ public class CallSiteProfile {
     }
 
     public static String toJSON(List<CallSiteProfile> profiles) {
-        return "[\n" +
-            profiles.stream()
-            .map(callSiteProfile -> String.format(
-                "  {\n    \"targetMethod\": \"%s\",\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"approxAddress\": \"0x%x\",\n    \"source\": \"%s\",\n    \"receiverCounts\": {\n%s\n    }\n  }",
-                callSiteProfile.targetMethod,
-                callSiteProfile.totalCount,
-                callSiteProfile.receiverCounts.size(),
-                callSiteProfile.sourceCodePointer.rawValue(),
-                callSiteProfile.source,
-                callSiteProfile.getTopReceiverClasses(999999).stream()
-                    .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
-                    .collect(Collectors.joining(",\n"))
-            )).collect(Collectors.joining(",\n")) +
+        return "[\n" + profiles.stream()
+                .map(callSiteProfile -> String.format(
+                    "  {\n    \"targetMethod\": \"%s\",\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"source\": \"%s\",\n    \"isDirectCall\": %s,\n    \"receiverCounts\": {\n%s\n    }\n  }",
+                    callSiteProfile.targetMethod,
+                    callSiteProfile.totalCount,
+                    callSiteProfile.receiverCounts.size(),
+                    callSiteProfile.source,
+                    callSiteProfile.isDirectCall ? "true" : "false",
+                    callSiteProfile.getTopReceiverClasses(null).stream()
+                        .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
+                        .collect(Collectors.joining(",\n"))
+                ))
+                .collect(Collectors.joining(",\n")) +
             "\n]\n";
     }
 
-    public CallSiteProfile(long totalCount, Map<String, Long> receiverCounts, String source, String targetMethod) {
+    public CallSiteProfile(long totalCount, Map<String, Long> receiverCounts, String source, String targetMethod, boolean isDirectCall) {
         this.totalCount = totalCount;
         this.receiverCounts = receiverCounts;
         this.source = source;
         this.targetMethod = targetMethod;
+        this.isDirectCall = isDirectCall;
     }
 
-    public CallSiteProfile(String source, String targetMethod, CodePointer sourceCodePointer) {
+    public CallSiteProfile(String source, String targetMethod, CodePointer sourceCodePointer, boolean isDirectCall) {
         this.totalCount = 0;
         this.receiverCounts = new HashMap<>();
         this.source = source;
         this.sourceCodePointer = sourceCodePointer;
         this.targetMethod = targetMethod;
+        this.isDirectCall = isDirectCall;
+    }
+
+    public String toString() {
+        return String.format("CallSiteProfile{source='%s', targetMethod='%s', totalCount=%d, receiverCounts=%s}",
+                source, targetMethod, totalCount, receiverCounts);
     }
 }
