@@ -27,6 +27,8 @@ package com.oracle.svm.hosted.code;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.DEOPT_TARGET_METHOD;
 
 import java.lang.annotation.Annotation;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -34,10 +36,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Random;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import com.oracle.svm.hosted.profile.CallSiteProfile;
+import com.oracle.svm.hosted.profile.VirtualInvokeProfileFeature;
+import jdk.vm.ci.meta.LineNumberTable;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;
@@ -734,6 +740,9 @@ public class CompileQueue {
 
         @Override
         public InlineInfo shouldInlineInvoke(GraphBuilderContext b, ResolvedJavaMethod method, ValueNode[] args) {
+            if (method.toString().contains("Demo")) {
+                System.out.println("Should inline " + method.format("%H.%n(%p) %r") + " with args: " + Arrays.toString(args));
+            }
             if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method) && b.recursiveInliningDepth(method) == 0) {
                 return InlineInfo.createStandardInlineInfo(method);
             } else {
@@ -846,27 +855,81 @@ public class CompileQueue {
         }
     }
 
-    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee) {
-        // GR-57832 this will be removed
-        if (callee.compilationInfo.getCompilationGraph() == null) {
-            /*
-             * We have compiled this method in a prior layer, but don't have the graph available
-             * here.
-             */
-            assert callee.isCompiledInPriorLayer() : method;
-            return false;
-        }
+    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
 
-        if (universe.hostVM().neverInlineTrivial(method.getWrapped(), callee.getWrapped())) {
-            return false;
+    static {
+        String profileDataDumpFileName = VirtualInvokeProfileFeature.Options.ProfileDataDumpFileName.getValue();
+        if (profileDataDumpFileName != null) {
+            Path jsonFilePath = Path.of(profileDataDumpFileName);
+            try {
+                String json = Files.readString(jsonFilePath);
+                callSiteProfiles = CallSiteProfile.loadFromJSON(json);
+
+                // TODO: Use the loaded profiles to handle inlining decisions
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
         }
-        if (callee.shouldBeInlined()) {
-            return true;
-        }
-        if (optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled()) {
-            return true;
-        }
+    }
+
+    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee) {
+//        System.out.println(random.nextFloat());
+//        boolean result = random.nextFloat() < 0.1f;
+//        if (result) {
+//            System.out.println("Inlining " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r"));
+//        }
+//        return true;
+
+//        method.compilationInfo.getCompilationGraph().getInvokeInfos().forEach(info -> {
+//            info.getNodeSourcePosition().getBCI()
+//        });
+
+//        if (method.toString().contains("Main")) {
+//            System.out.println("Inlining decision for " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r"));
+//            return false;
+//        }
+
+        callSiteProfiles.forEach(profile -> {
+            if (profile.getTargetMethod().equals(callee.toString())) {
+                System.out.println("Found profile for " + callee.format("%H.%n(%p) %r") + ": " + profile);
+            }
+        });
+
+
+//        method.compilationInfo.getCompilationGraph().getInvokeInfos().stream()
+//            .filter(invoke -> invoke.getTargetMethod().equals(callee))
+//            .forEach(invoke -> {
+//                LineNumberTable lineNumberTable = method.getLineNumberTable();
+//
+//                callSiteProfiles.stream().filter(profile -> invoke.getTargetMethod().toString().contains(profile.getTargetMethod())).forEach(profile -> {
+//                    System.out.println("Found matching profile for " + invoke.getTargetMethod().format("%H.%n(%p) %r") + ": " + profile);
+//                });
+//
+//                if (lineNumberTable == null || invoke.getNodeSourcePosition() == null) {
+//    //                System.err.println("No line number table or source position for " + method.format("%H.%n(%p) %r"));
+//                    return; // No line number information available
+//                }
+//
+//                int lineNumber = lineNumberTable.getLineNumber(invoke.getNodeSourcePosition().getBCI());
+//                String fileName = method.getDeclaringClass().getSourceFileName();
+//                String source = String.format("%s:%d", fileName, lineNumber);
+//
+//
+//                callSiteProfiles.stream().filter(profile -> profile.getSource().equals(source)).findAny().ifPresent(profile -> System.out.println("Inlining decision for " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r") + " based on profile data: " + profile));
+//            });
+
         return false;
+//
+//        if (universe.hostVM().neverInlineTrivial(method.getWrapped(), callee.getWrapped())) {
+//            return false;
+//        }
+//        if (callee.shouldBeInlined()) {
+//            return true;
+//        }
+//        if (optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled()) {
+//            return true;
+//        }
+//        return false;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
