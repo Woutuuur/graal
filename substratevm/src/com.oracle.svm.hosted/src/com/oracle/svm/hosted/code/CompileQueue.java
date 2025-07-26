@@ -892,7 +892,7 @@ public class CompileQueue {
                         String source = String.format("%s:%d", fileName, lineNumber);
 
                         return source.equals(profile.getSource()); // If the source is the same, then we found a correct profile for this method/callee combo
-                    }).count() == 1;                               // But only use it
+                    }).count() == 1;                               // But only use it if there is exactly one invoke that matches the profile
             })
             .anyMatch(profile -> { // Finally, should we inline this callee?
                 System.out.println("Considering inlining " + callee.format("%H.%n(%p):%r") + " into " + method.format("%H.%n(%p):%r") +
