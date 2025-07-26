@@ -1,19 +1,15 @@
 package com.oracle.svm.hosted.profile;
 
 import com.oracle.svm.core.NeverInline;
+import com.oracle.svm.core.heap.NoAllocationVerifier;
 import com.oracle.svm.core.snippets.KnownIntrinsics;
-import org.graalvm.nativeimage.c.function.CodePointer;
 
 import java.util.Arrays;
-import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 public class VirtualInvokeProfiler {
-    static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[100000];
+    static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[10000000];
     private static boolean profilingEnabled = false;
     private static boolean isInProfilerContext = false;
 
@@ -31,7 +27,7 @@ public class VirtualInvokeProfiler {
 
     @NeverInline("Safe return address retrieval")
     static void profileVirtualInvoke(boolean isDirect, String source, String targetMethodName, Object receiver, int callSiteId) {
-        if (!profilingEnabled || isInProfilerContext) {
+        if (!profilingEnabled || isInProfilerContext || NoAllocationVerifier.isActive()) {
             return;
         }
 
@@ -44,7 +40,7 @@ public class VirtualInvokeProfiler {
             callSiteProfiles[callSiteId] = callSiteProfile;
         }
 
-        String receiverClassName = receiver instanceof String ? (String) receiver : receiver.getClass().getName();
+        String receiverClassName = isDirect ? (String) receiver : receiver.getClass().getName();
         callSiteProfile.receiverCounts.put(receiverClassName, callSiteProfile.receiverCounts.getOrDefault(receiverClassName, 0L) + 1);
         callSiteProfile.totalCount++;
 

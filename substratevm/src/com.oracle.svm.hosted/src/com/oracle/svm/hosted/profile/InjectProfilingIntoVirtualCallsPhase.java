@@ -62,11 +62,11 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
     private InvokeNode createInvokeToMethod(ResolvedJavaMethod method, StructuredGraph graph, ValueNode[] args, InvokeKind kind, StampPair returnStamp) {
         CallTargetNode callTargetNode = graph.add(new MethodCallTargetNode(
-                kind,
-                method,
-                args,
-                returnStamp,
-                null
+            kind,
+            method,
+            args,
+            returnStamp,
+            null
         ));
         InvokeNode invoke = graph.add(new InvokeNode(callTargetNode,0));
         ValueNode[] stack = ValueNode.EMPTY_ARRAY;
@@ -178,8 +178,8 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
                     ConstantNode isDirectConstant = ConstantNode.forConstant(JavaConstant.forBoolean(invokeNode.callTarget().invokeKind().isDirect()), context.getMetaAccess());
 
                     ValueNode receiver = invokeNode.callTarget().invokeKind().isDirect() ?
-                            graph.addOrUnique(ConstantNode.forConstant(context.getConstantReflection().forString(invokeNode.callTarget().targetMethod().getDeclaringClass().toJavaName()), context.getMetaAccess())) :
-                            invokeNode.callTarget().arguments().getFirst();
+                        graph.addOrUnique(ConstantNode.forConstant(context.getConstantReflection().forString(invokeNode.callTarget().targetMethod().getDeclaringClass().toJavaName()), context.getMetaAccess())) :
+                        invokeNode.callTarget().arguments().getFirst();
 
                     CallSiteProfilerNode callSiteProfilerNode = graph.add(new CallSiteProfilerNode(
                         graph.addOrUnique(isDirectConstant),

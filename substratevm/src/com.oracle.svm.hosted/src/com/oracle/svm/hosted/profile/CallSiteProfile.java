@@ -28,6 +28,10 @@ public class CallSiteProfile {
         return targetMethod;
     }
 
+    public boolean isDirectCall() {
+        return isDirectCall;
+    }
+
     protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
         Stream<Map.Entry<String, Long>> receiverStream = receiverCounts.entrySet().stream()
                 .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()));
