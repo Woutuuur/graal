@@ -865,7 +865,7 @@ public class CompileQueue {
                 String json = Files.readString(jsonFilePath);
                 callSiteProfiles = CallSiteProfile.loadFromJSON(json);
 
-                // TODO: Use the loaded profiles to handle inlining decisions
+                System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -873,63 +873,32 @@ public class CompileQueue {
     }
 
     private boolean makeInlineDecision(HostedMethod method, HostedMethod callee) {
-//        System.out.println(random.nextFloat());
-//        boolean result = random.nextFloat() < 0.1f;
-//        if (result) {
-//            System.out.println("Inlining " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r"));
-//        }
-//        return true;
+        return callSiteProfiles.stream()
+            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
+            .filter(profile -> {
+                // If there are multiple invokes to callee in method, so we cannot guarantee that this profile is the right one, skip it
+                // If there are no matching invokes, we also want to skip this profile
+                return method.compilationInfo.getCompilationGraph().getInvokeInfos().stream()
+                    .filter(invoke -> invoke.getTargetMethod().equals(callee)) // Found an invoke that is for this specific callee
+                    .filter(invoke -> { // Since there can be multiple invokes with the same callee, we need to check if the source position matches the profile
+                        LineNumberTable lineNumberTable = method.getLineNumberTable();
 
-//        method.compilationInfo.getCompilationGraph().getInvokeInfos().forEach(info -> {
-//            info.getNodeSourcePosition().getBCI()
-//        });
+                        if (lineNumberTable == null || invoke.getNodeSourcePosition() == null) {
+                            return false;
+                        }
 
-//        if (method.toString().contains("Main")) {
-//            System.out.println("Inlining decision for " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r"));
-//            return false;
-//        }
+                        int lineNumber = lineNumberTable.getLineNumber(invoke.getNodeSourcePosition().getBCI());
+                        String fileName = method.getDeclaringClass().getSourceFileName();
+                        String source = String.format("%s:%d", fileName, lineNumber);
 
-        callSiteProfiles.forEach(profile -> {
-            if (profile.getTargetMethod().equals(callee.toString())) {
-                System.out.println("Found profile for " + callee.format("%H.%n(%p) %r") + ": " + profile);
-            }
-        });
-
-
-//        method.compilationInfo.getCompilationGraph().getInvokeInfos().stream()
-//            .filter(invoke -> invoke.getTargetMethod().equals(callee))
-//            .forEach(invoke -> {
-//                LineNumberTable lineNumberTable = method.getLineNumberTable();
-//
-//                callSiteProfiles.stream().filter(profile -> invoke.getTargetMethod().toString().contains(profile.getTargetMethod())).forEach(profile -> {
-//                    System.out.println("Found matching profile for " + invoke.getTargetMethod().format("%H.%n(%p) %r") + ": " + profile);
-//                });
-//
-//                if (lineNumberTable == null || invoke.getNodeSourcePosition() == null) {
-//    //                System.err.println("No line number table or source position for " + method.format("%H.%n(%p) %r"));
-//                    return; // No line number information available
-//                }
-//
-//                int lineNumber = lineNumberTable.getLineNumber(invoke.getNodeSourcePosition().getBCI());
-//                String fileName = method.getDeclaringClass().getSourceFileName();
-//                String source = String.format("%s:%d", fileName, lineNumber);
-//
-//
-//                callSiteProfiles.stream().filter(profile -> profile.getSource().equals(source)).findAny().ifPresent(profile -> System.out.println("Inlining decision for " + method.format("%H.%n(%p) %r") + " -> " + callee.format("%H.%n(%p) %r") + " based on profile data: " + profile));
-//            });
-
-        return false;
-//
-//        if (universe.hostVM().neverInlineTrivial(method.getWrapped(), callee.getWrapped())) {
-//            return false;
-//        }
-//        if (callee.shouldBeInlined()) {
-//            return true;
-//        }
-//        if (optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled()) {
-//            return true;
-//        }
-//        return false;
+                        return source.equals(profile.getSource()); // If the source is the same, then we found a correct profile for this method/callee combo
+                    }).count() == 1;                               // But only use it
+            })
+            .anyMatch(profile -> { // Finally, should we inline this callee?
+                System.out.println("Considering inlining " + callee.format("%H.%n(%p):%r") + " into " + method.format("%H.%n(%p):%r") +
+                        " based on profile: " + profile);
+                return false;
+            });
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
