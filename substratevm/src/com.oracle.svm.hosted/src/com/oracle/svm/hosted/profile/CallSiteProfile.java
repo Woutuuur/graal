@@ -2,17 +2,19 @@ package com.oracle.svm.hosted.profile;
 
 import org.graalvm.nativeimage.c.function.CodePointer;
 
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-public class CallSiteProfile {
+public class CallSiteProfile implements Comparable<CallSiteProfile> {
     long totalCount;
     Map<String, Long> receiverCounts;
     String source;
@@ -32,6 +34,10 @@ public class CallSiteProfile {
         return isDirectCall;
     }
 
+    public long getTotalCount() {
+        return totalCount;
+    }
+
     protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
         Stream<Map.Entry<String, Long>> receiverStream = receiverCounts.entrySet().stream()
                 .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()));
@@ -42,22 +48,21 @@ public class CallSiteProfile {
     public static List<CallSiteProfile> loadFromJSON(String json) {
         List<CallSiteProfile> profiles = new ArrayList<>();
         Pattern pattern = Pattern.compile(
-            "\\{\\s*\"targetMethod\":\\s*\"([^\"]+)\",\\s*" +
-            "\"totalCount\":\\s*(\\d+),\\s*" +
-            "\"uniqueCallsites\":\\s*\\d+,\\s*" +
-            "\"approxAddress\":\\s*\"(0x[0-9a-fA-F]+)\",\\s*" +
-            "\"source\":\\s*\"([^\"]+)\",\\s*" +
-            "\"isDirectCall\":\\s*(true|false),\\s*" +
-            "\"receiverCounts\":\\s*\\{([^}]*)}\\s*}");
+            "\\{\\s*\"targetMethod\": \"([^\"]+)\",\\s*" +
+            "\"totalCount\": (\\d+),\\s*" +
+            "\"uniqueCallsites\": \\d+,\\s*" +
+            "\"source\": \"([^\"]+)\",\\s*" +
+            "\"isDirectCall\": (true|false),\\s*" +
+            "\"receiverCounts\": \\{([^}]*)}\\s*}");
         Matcher matcher = pattern.matcher(json);
         while (matcher.find()) {
             String targetMethod = matcher.group(1);
             long totalCount = Long.parseLong(matcher.group(2));
-            String source = matcher.group(4);
-            boolean isDirectCall = Boolean.parseBoolean(matcher.group(5));
+            String source = matcher.group(3);
+            boolean isDirectCall = Boolean.parseBoolean(matcher.group(4));
 
             Map<String, Long> receiverCounts = new HashMap<>();
-            String receiverCountsStr = matcher.group(6);
+            String receiverCountsStr = matcher.group(5);
             Pattern receiverPattern = Pattern.compile("\"([^\"]+)\":\\s*(\\d+)");
             Matcher receiverMatcher = receiverPattern.matcher(receiverCountsStr);
             while (receiverMatcher.find()) {
@@ -75,19 +80,19 @@ public class CallSiteProfile {
 
     public static String toJSON(List<CallSiteProfile> profiles) {
         return "[\n" + profiles.stream()
-                .map(callSiteProfile -> String.format(
-                    "  {\n    \"targetMethod\": \"%s\",\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"source\": \"%s\",\n    \"isDirectCall\": %s,\n    \"receiverCounts\": {\n%s\n    }\n  }",
-                    callSiteProfile.targetMethod,
-                    callSiteProfile.totalCount,
-                    callSiteProfile.receiverCounts.size(),
-                    callSiteProfile.source,
-                    callSiteProfile.isDirectCall ? "true" : "false",
-                    callSiteProfile.getTopReceiverClasses(null).stream()
-                        .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
-                        .collect(Collectors.joining(",\n"))
-                ))
-                .collect(Collectors.joining(",\n")) +
-            "\n]\n";
+            .map(callSiteProfile -> String.format(
+                "  {\n    \"targetMethod\": \"%s\",\n    \"totalCount\": %d,\n    \"uniqueCallsites\": %d,\n    \"source\": \"%s\",\n    \"isDirectCall\": %s,\n    \"receiverCounts\": {\n%s\n    }\n  }",
+                callSiteProfile.targetMethod,
+                callSiteProfile.totalCount,
+                callSiteProfile.receiverCounts.size(),
+                callSiteProfile.source,
+                callSiteProfile.isDirectCall ? "true" : "false",
+                callSiteProfile.getTopReceiverClasses(null).stream()
+                    .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
+                    .collect(Collectors.joining(",\n"))
+            ))
+            .collect(Collectors.joining(",\n")) +
+        "\n]\n";
     }
 
     public CallSiteProfile(long totalCount, Map<String, Long> receiverCounts, String source, String targetMethod, boolean isDirectCall) {
@@ -111,4 +116,10 @@ public class CallSiteProfile {
         return String.format("CallSiteProfile{source='%s', targetMethod='%s', totalCount=%d, receiverCounts=%s}",
                 source, targetMethod, totalCount, receiverCounts);
     }
+
+    @Override
+    public int compareTo(CallSiteProfile o) {
+        return Long.compare(o.totalCount, this.totalCount);
+    }
+
 }

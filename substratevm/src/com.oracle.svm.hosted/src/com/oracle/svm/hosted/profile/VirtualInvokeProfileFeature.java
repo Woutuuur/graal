@@ -30,6 +30,10 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
+        if (Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+            return;
+        }
+
         try {
             RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
             RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());

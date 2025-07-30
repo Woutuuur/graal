@@ -172,7 +172,7 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
                     String callSiteSource = getSource(invokeNode);
                     ConstantNode callSiteSourceConstant = ConstantNode.forConstant(context.getConstantReflection().forString(callSiteSource), context.getMetaAccess());
 
-                    String targetMethodName = invokeNode.callTarget().targetName();
+                    String targetMethodName = invokeNode.callTarget().targetMethod().format("%H.%n(%p):%r");
                     ConstantNode targetMethodNameConstant = ConstantNode.forConstant(context.getConstantReflection().forString(targetMethodName), context.getMetaAccess());
 
                     ConstantNode isDirectConstant = ConstantNode.forConstant(JavaConstant.forBoolean(invokeNode.callTarget().invokeKind().isDirect()), context.getMetaAccess());

@@ -33,10 +33,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Random;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -321,19 +322,44 @@ public class CompileQueue {
         }
     }
 
-    protected class TrivialInlineTask implements Task {
+    private boolean invokeBciCheckEnabled = false;
+
+    private CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
+        if (invokeBciCheckEnabled && invokeBci == -1) {
+            System.out.println("invokeBciCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
+            return null;
+        }
+
+        List<CallSiteProfile> matchingProfiles = callSiteProfilesToInline.stream()
+            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
+            .filter(profile -> {
+                LineNumberTable lineNumberTable = contextMethod.getLineNumberTable();
+                if (lineNumberTable == null || invokeBci == -1) {
+                    // Just accept it, we'll reject it anyway if there are multiple matching for this contextMethod/callee combo
+                    return true;
+                }
+                int lineNumber = lineNumberTable.getLineNumber(invokeBci);
+                String fileName = contextMethod.getDeclaringClass().getSourceFileName();
+                String source = String.format("%s:%d", fileName, lineNumber);
+                return source.equals(profile.getSource());
+            }).toList();
+
+        return matchingProfiles.size() == 1 ? matchingProfiles.getFirst() : null;
+    }
+
+    protected class InlineTask implements Task {
 
         private final HostedMethod method;
         private final Description description;
 
-        TrivialInlineTask(HostedMethod method) {
+        InlineTask(HostedMethod method) {
             this.method = method;
             this.description = new Description(method, method.getName());
         }
 
         @Override
         public void run(DebugContext debug) {
-            doInlineTrivial(debug, method);
+            doInline(debug, method);
         }
 
         @Override
@@ -432,7 +458,7 @@ public class CompileQueue {
                 ImageSingletons.lookup(HostedHeapDumpFeature.class).beforeInlining();
             }
             try (ProgressReporter.ReporterClosable ac = reporter.printInlining()) {
-                inlineTrivialMethods(debug);
+                inlineMethods(debug);
             }
             if (ImageSingletons.contains(HostedHeapDumpFeature.class)) {
                 ImageSingletons.lookup(HostedHeapDumpFeature.class).afterInlining();
@@ -704,7 +730,7 @@ public class CompileQueue {
     }
 
     @SuppressWarnings("try")
-    protected void inlineTrivialMethods(DebugContext debug) throws InterruptedException {
+    protected void inlineMethods(DebugContext debug) throws InterruptedException {
         int round = 0;
         do {
             ProgressReporter.singleton().reportStageProgress();
@@ -717,7 +743,7 @@ public class CompileQueue {
                         for (MultiMethod multiMethod : method.getAllMultiMethods()) {
                             HostedMethod hMethod = (HostedMethod) multiMethod;
                             if (hMethod.compilationInfo.getCompilationGraph() != null) {
-                                executor.execute(new TrivialInlineTask(hMethod));
+                                executor.execute(new InlineTask(hMethod));
                             }
                         }
                     });
@@ -732,18 +758,18 @@ public class CompileQueue {
             }
             unpublishedTrivialMethods.clear();
         } while (inliningProgress);
+        System.out.println("Inlined " + numInlinedMethods + " methods during inlining");
     }
 
-    class TrivialInliningPlugin implements InlineInvokePlugin {
+    class InliningPlugin implements InlineInvokePlugin {
 
         boolean inlinedDuringDecoding;
 
         @Override
         public InlineInfo shouldInlineInvoke(GraphBuilderContext b, ResolvedJavaMethod method, ValueNode[] args) {
-            if (method.toString().contains("Demo")) {
-                System.out.println("Should inline " + method.format("%H.%n(%p) %r") + " with args: " + Arrays.toString(args));
-            }
-            if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method) && b.recursiveInliningDepth(method) == 0) {
+
+            if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method, b.bci()) && b.recursiveInliningDepth(method) == 0) {
+                numInlinedMethods++;
                 return InlineInfo.createStandardInlineInfo(method);
             } else {
                 return InlineInfo.DO_NOT_INLINE_WITH_EXCEPTION;
@@ -758,7 +784,7 @@ public class CompileQueue {
 
     class InliningGraphDecoder extends PEGraphDecoder {
 
-        InliningGraphDecoder(StructuredGraph graph, Providers providers, TrivialInliningPlugin inliningPlugin) {
+        InliningGraphDecoder(StructuredGraph graph, Providers providers, InliningPlugin inliningPlugin) {
             super(AnalysisParsedGraph.HOST_ARCHITECTURE, graph, providers, null,
                             null,
                             new InlineInvokePlugin[]{inliningPlugin},
@@ -778,11 +804,11 @@ public class CompileQueue {
     }
 
     // Wrapper to clearly identify phase
-    class TrivialInlinePhase extends Phase {
+    class InlinePhase extends Phase {
         final InliningGraphDecoder decoder;
         final HostedMethod method;
 
-        TrivialInlinePhase(InliningGraphDecoder decoder, HostedMethod method) {
+        InlinePhase(InliningGraphDecoder decoder, HostedMethod method) {
             this.decoder = decoder;
             this.method = method;
         }
@@ -794,12 +820,35 @@ public class CompileQueue {
 
         @Override
         public CharSequence getName() {
-            return "TrivialInline";
+            return "Inline";
         }
     }
 
+    private final static float INLINE_PROFILES_PERCENTAGE = 0.05f;
+    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
+    private static Set<CallSiteProfile> callSiteProfilesToInline = null;
+
+    static {
+        String profileDataDumpFileName = VirtualInvokeProfileFeature.Options.ProfileDataDumpFileName.getValue();
+        if (profileDataDumpFileName != null) {
+            Path jsonFilePath = Path.of(profileDataDumpFileName);
+            try {
+                String json = Files.readString(jsonFilePath);
+                callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
+
+                int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
+                callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
+
+                System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
+
+
     @SuppressWarnings("try")
-    private void doInlineTrivial(DebugContext debug, HostedMethod method) {
+    private void doInline(DebugContext debug, HostedMethod method) {
         /*
          * Before doing any work, check if there is any potential for inlining.
          *
@@ -809,7 +858,9 @@ public class CompileQueue {
          */
         boolean inliningPotential = false;
         for (var invokeInfo : method.compilationInfo.getCompilationGraph().getInvokeInfos()) {
-            if (invokeInfo.getInvokeKind().isDirect() && makeInlineDecision(method, invokeInfo.getTargetMethod())) {
+            int bci = invokeInfo.getNodeSourcePosition() != null ? invokeInfo.getNodeSourcePosition().getBCI() : -1;
+
+            if (invokeInfo.getInvokeKind().isDirect() && makeInlineDecision(method, invokeInfo.getTargetMethod(), bci)) {
                 inliningPotential = true;
                 break;
             }
@@ -817,12 +868,13 @@ public class CompileQueue {
         if (!inliningPotential) {
             return;
         }
+        invokeBciCheckEnabled = true;
         var providers = runtimeConfig.lookupBackend(method).getProviders();
         var graph = method.compilationInfo.createGraph(debug, getCustomizedOptions(method, debug), CompilationIdentifier.INVALID_COMPILATION_ID, false);
-        try (var s = debug.scope("InlineTrivial", graph, method, this)) {
-            var inliningPlugin = new TrivialInliningPlugin();
+        try (var s = debug.scope("Inline", graph, method, this)) {
+            var inliningPlugin = new InliningPlugin();
             var decoder = new InliningGraphDecoder(graph, providers, inliningPlugin);
-            new TrivialInlinePhase(decoder, method).apply(graph);
+            new InlinePhase(decoder, method).apply(graph);
 
             if (inliningPlugin.inlinedDuringDecoding) {
                 CanonicalizerPhase.create().apply(graph, providers);
@@ -839,7 +891,6 @@ public class CompileQueue {
                      */
                     method.compilationInfo.setTrivialInliningDisabled();
                     inliningProgress = true;
-
                 } else {
                     /*
                      * If we publish the new graph immediately, it can be picked up by other threads
@@ -855,50 +906,53 @@ public class CompileQueue {
         }
     }
 
-    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
+    private int numInlinedMethods = 0;
 
-    static {
-        String profileDataDumpFileName = VirtualInvokeProfileFeature.Options.ProfileDataDumpFileName.getValue();
-        if (profileDataDumpFileName != null) {
-            Path jsonFilePath = Path.of(profileDataDumpFileName);
-            try {
-                String json = Files.readString(jsonFilePath);
-                callSiteProfiles = CallSiteProfile.loadFromJSON(json);
-
-                System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
+    private boolean originalMakeInlineDecision(HostedMethod method, HostedMethod callee) {
+        // GR-57832 this will be removed
+        if (callee.compilationInfo.getCompilationGraph() == null) {
+            /*
+             * We have compiled this method in a prior layer, but don't have the graph available
+             * here.
+             */
+            assert callee.isCompiledInPriorLayer() : method;
+            return false;
         }
+
+        if (universe.hostVM().neverInlineTrivial(method.getWrapped(), callee.getWrapped())) {
+            return false;
+        }
+
+        if (callee.shouldBeInlined()) {
+            return true;
+        }
+
+        return optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled();
     }
 
-    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee) {
-        return callSiteProfiles.stream()
-            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
-            .filter(profile -> {
-                // If there are multiple invokes to callee in method, so we cannot guarantee that this profile is the right one, skip it
-                // If there are no matching invokes, we also want to skip this profile
-                return method.compilationInfo.getCompilationGraph().getInvokeInfos().stream()
-                    .filter(invoke -> invoke.getTargetMethod().equals(callee)) // Found an invoke that is for this specific callee
-                    .filter(invoke -> { // Since there can be multiple invokes with the same callee, we need to check if the source position matches the profile
-                        LineNumberTable lineNumberTable = method.getLineNumberTable();
+    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
+//        System.out.println("Make inline decision for " + method);
+        if (callSiteProfiles.isEmpty()) {
+            return originalMakeInlineDecision(method, callee);
+        }
 
-                        if (lineNumberTable == null || invoke.getNodeSourcePosition() == null) {
-                            return false;
-                        }
+        if (callee.compilationInfo.getCompilationGraph() == null) {
+            return false;
+        }
 
-                        int lineNumber = lineNumberTable.getLineNumber(invoke.getNodeSourcePosition().getBCI());
-                        String fileName = method.getDeclaringClass().getSourceFileName();
-                        String source = String.format("%s:%d", fileName, lineNumber);
+//         TODO: include original logic to include all trivial methods, cause why not? Or stick to own logic only?
+//        if (originalMakeInlineDecision(method, callee)) {
+//            return true;
+//        }
 
-                        return source.equals(profile.getSource()); // If the source is the same, then we found a correct profile for this method/callee combo
-                    }).count() == 1;                               // But only use it if there is exactly one invoke that matches the profile
-            })
-            .anyMatch(profile -> { // Finally, should we inline this callee?
-                System.out.println("Considering inlining " + callee.format("%H.%n(%p):%r") + " into " + method.format("%H.%n(%p):%r") +
-                        " based on profile: " + profile);
-                return false;
-            });
+        // TODO: find out how this is determined?
+        if (callee.shouldBeInlined()) {
+            return true;
+        }
+
+        CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
+
+        return matchingProfile != null;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
