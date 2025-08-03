@@ -1,25 +1,18 @@
 package com.oracle.svm.hosted.profile;
 
-import org.graalvm.nativeimage.c.function.CodePointer;
-
-import java.io.Serializable;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class CallSiteProfile implements Comparable<CallSiteProfile> {
     long totalCount;
-    Map<String, Long> receiverCounts;
+    HashMap<String, Long> receiverCounts;
     String source;
     String targetMethod;
-    CodePointer sourceCodePointer;
     boolean isDirectCall;
 
     public String getSource() {
@@ -39,10 +32,7 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
     }
 
     protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
-        Stream<Map.Entry<String, Long>> receiverStream = receiverCounts.entrySet().stream()
-                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()));
-        Stream<Map.Entry<String, Long>> resultStream = limit == null ? receiverStream : receiverStream.limit(limit);
-        return resultStream.collect(Collectors.toList());
+        return new ArrayList<>(receiverCounts.entrySet());
     }
 
     public static List<CallSiteProfile> loadFromJSON(String json) {
@@ -87,7 +77,7 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
                 callSiteProfile.receiverCounts.size(),
                 callSiteProfile.source,
                 callSiteProfile.isDirectCall ? "true" : "false",
-                callSiteProfile.getTopReceiverClasses(null).stream()
+                callSiteProfile.receiverCounts.entrySet().stream()
                     .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
                     .collect(Collectors.joining(",\n"))
             ))
@@ -97,19 +87,18 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
 
     public CallSiteProfile(long totalCount, Map<String, Long> receiverCounts, String source, String targetMethod, boolean isDirectCall) {
         this.totalCount = totalCount;
-        this.receiverCounts = receiverCounts;
+        this.receiverCounts = new HashMap<>(receiverCounts);
         this.source = source;
         this.targetMethod = targetMethod;
         this.isDirectCall = isDirectCall;
     }
 
-    public CallSiteProfile(String source, String targetMethod, CodePointer sourceCodePointer, boolean isDirectCall) {
-        this.totalCount = 0;
-        this.receiverCounts = new HashMap<>();
+    public CallSiteProfile(String source, String targetMethod, boolean isDirectCall) {
+        this.receiverCounts = new HashMap<>(100);
         this.source = source;
-        this.sourceCodePointer = sourceCodePointer;
         this.targetMethod = targetMethod;
         this.isDirectCall = isDirectCall;
+        this.totalCount = 0;
     }
 
     public String toString() {

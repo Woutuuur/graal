@@ -1,20 +1,16 @@
 package com.oracle.svm.hosted.profile;
 
-import com.oracle.svm.core.NeverInline;
 import com.oracle.svm.core.heap.NoAllocationVerifier;
-import com.oracle.svm.core.snippets.KnownIntrinsics;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
-import java.util.stream.Collectors;
 
 public class VirtualInvokeProfiler {
     static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[10000000];
     private static boolean profilingEnabled = false;
-    private static boolean isInProfilerContext = false;
+    private static volatile boolean profilingInProgress = false;
 
     public static void enableProfiling() {
         profilingEnabled = true;
@@ -28,30 +24,30 @@ public class VirtualInvokeProfiler {
         System.out.println("bar");
     }
 
-    @NeverInline("Safe return address retrieval")
+
     static void profileVirtualInvoke(boolean isDirect, String source, String targetMethodName, Object receiver, int callSiteId) {
-        if (!profilingEnabled || isInProfilerContext || NoAllocationVerifier.isActive()) {
+        if (!profilingEnabled || NoAllocationVerifier.isActive() || profilingInProgress) {
             return;
         }
 
-        isInProfilerContext = true;
 
         CallSiteProfile callSiteProfile = callSiteProfiles[callSiteId];
 
         if (callSiteProfile == null) {
-            callSiteProfile = new CallSiteProfile(source, targetMethodName, KnownIntrinsics.readReturnAddress(), isDirect);
+            callSiteProfile = new CallSiteProfile(source, targetMethodName, isDirect);
             callSiteProfiles[callSiteId] = callSiteProfile;
         }
 
         String receiverClassName = isDirect ? (String) receiver : receiver.getClass().getName();
-        callSiteProfile.receiverCounts.put(receiverClassName, callSiteProfile.receiverCounts.getOrDefault(receiverClassName, 0L) + 1);
+        Long currentCount = callSiteProfile.receiverCounts.putIfAbsent(receiverClassName, 1L);
+        if (currentCount != null) {
+            callSiteProfile.receiverCounts.put(receiverClassName, currentCount + 1);
+        }
         callSiteProfile.totalCount++;
-
-        isInProfilerContext = false;
     }
 
     public static void dumpProfileData() {
-        isInProfilerContext = true;
+        profilingInProgress = true;
 
         long minUniqueReceiverCount = 1;
         long minTotalCount = 0;
@@ -84,7 +80,6 @@ public class VirtualInvokeProfiler {
             } catch (java.io.IOException e) {
                 e.printStackTrace();
             }
-
         } catch (Exception e) {
             System.out.println("Error while dumping profile data: " + e.getMessage());
             e.printStackTrace();

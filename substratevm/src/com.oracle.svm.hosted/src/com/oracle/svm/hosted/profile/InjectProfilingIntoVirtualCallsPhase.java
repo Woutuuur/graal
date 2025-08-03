@@ -42,14 +42,29 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
 
     private static final String[] EXCLUDED_PACKAGES = {
         "com.oracle.svm.core",
+        "com.oracle.svm.hosted.profile",
+        "java.util",
+        "jdk.internal",
+        "java.lang.Object",
+        "java.lang.System",
+        "java.lang.Runtime",
+        "java.lang.Thread"
+    };
+
+    private static final String[] EXCLUDED_CONTEXT_METHOD_FUZZY_PARTS = {
+        "VirtualInvokeProfiler",
+        "CallSiteProfile",
+        "NoAllocationVerifier",
+        "HashMap"
     };
 
     private static boolean shouldProfileInvoke(Invoke invoke) {
         InvokeKind kind = invoke.getInvokeKind();
         String fullyQualifiedName = invoke.callTarget().targetMethod().format("%H.%n(%p)");
+        String contextMethod = invoke.getContextMethod().toString();
 
         return Arrays.stream(EXCLUDED_PACKAGES).noneMatch(fullyQualifiedName::startsWith) &&
-                !invoke.getContextMethod().toString().contains("VirtualInvokeProfiler");
+               Arrays.stream(EXCLUDED_CONTEXT_METHOD_FUZZY_PARTS).noneMatch(contextMethod::contains);
     }
 
     private InvokeNode createInvokeToMethod(ResolvedJavaMethod method, StructuredGraph graph, StampPair stamp) {
@@ -189,6 +204,7 @@ public class InjectProfilingIntoVirtualCallsPhase extends BasePhase<HighTierCont
                         graph.addOrUnique(ConstantNode.forInt(CallSiteRegistry.allocateId()))
                     ));
                     graph.addBeforeFixed(invokeNode.asFixedNode(), callSiteProfilerNode);
+                    handledInvokes.add(invokeNode);
                 }
             });
     }

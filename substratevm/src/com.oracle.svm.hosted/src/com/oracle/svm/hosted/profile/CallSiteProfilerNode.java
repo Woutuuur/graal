@@ -68,7 +68,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
             null
         ));
 
-        InvokeNode invokeToProfiler = graph.add(new InvokeNode(profilerCallTargetNode,0));
+        InvokeNode invokeToProfiler = graph.add(new InvokeNode(profilerCallTargetNode, 0));
 
         FrameState stateAfter = graph.add(new FrameState(
             null,
