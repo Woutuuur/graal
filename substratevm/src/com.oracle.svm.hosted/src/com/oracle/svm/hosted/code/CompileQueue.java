@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.oracle.svm.hosted.profile.CallSiteProfile;
+import com.oracle.svm.hosted.profile.InjectProfilingIntoVirtualCallsPhase;
 import com.oracle.svm.hosted.profile.VirtualInvokeProfileFeature;
 import jdk.vm.ci.meta.LineNumberTable;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -322,14 +323,9 @@ public class CompileQueue {
         }
     }
 
-    private boolean invokeBciCheckEnabled = false;
+    private boolean tooManyMatchingProfilesCheckEnabled = false;
 
     private CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
-        if (invokeBciCheckEnabled && invokeBci == -1) {
-            System.out.println("invokeBciCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
-            return null;
-        }
-
         List<CallSiteProfile> matchingProfiles = callSiteProfilesToInline.stream()
             .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
             .filter(profile -> {
@@ -343,6 +339,10 @@ public class CompileQueue {
                 String source = String.format("%s:%d", fileName, lineNumber);
                 return source.equals(profile.getSource());
             }).toList();
+
+        if (tooManyMatchingProfilesCheckEnabled && matchingProfiles.size() > 1) {
+            System.out.println("tooManyMatchingProfilesCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
+        }
 
         return matchingProfiles.size() == 1 ? matchingProfiles.getFirst() : null;
     }
@@ -768,6 +768,10 @@ public class CompileQueue {
         @Override
         public InlineInfo shouldInlineInvoke(GraphBuilderContext b, ResolvedJavaMethod method, ValueNode[] args) {
 
+            if (b.bci() == -1) {
+                System.out.println("InliningPlugin: bci is -1 for method " + method.format("%H.%n(%p) %r") + ", args: " + Arrays.toString(args));
+            }
+
             if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method, b.bci()) && b.recursiveInliningDepth(method) == 0) {
                 numInlinedMethods++;
                 return InlineInfo.createStandardInlineInfo(method);
@@ -824,7 +828,7 @@ public class CompileQueue {
         }
     }
 
-    private final static float INLINE_PROFILES_PERCENTAGE = 0.05f;
+    private final static float INLINE_PROFILES_PERCENTAGE = 0.04f;
     private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
     private static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
@@ -849,26 +853,7 @@ public class CompileQueue {
 
     @SuppressWarnings("try")
     private void doInline(DebugContext debug, HostedMethod method) {
-        /*
-         * Before doing any work, check if there is any potential for inlining.
-         *
-         * Note that we do not have information about the recursive inlining depth, but that is OK
-         * because in that case we just over-estimate the inlining potential, i.e., we do the
-         * decoding just to find out that nothing could be inlined.
-         */
-        boolean inliningPotential = false;
-        for (var invokeInfo : method.compilationInfo.getCompilationGraph().getInvokeInfos()) {
-            int bci = invokeInfo.getNodeSourcePosition() != null ? invokeInfo.getNodeSourcePosition().getBCI() : -1;
-
-            if (invokeInfo.getInvokeKind().isDirect() && makeInlineDecision(method, invokeInfo.getTargetMethod(), bci)) {
-                inliningPotential = true;
-                break;
-            }
-        }
-        if (!inliningPotential) {
-            return;
-        }
-        invokeBciCheckEnabled = true;
+        tooManyMatchingProfilesCheckEnabled = true;
         var providers = runtimeConfig.lookupBackend(method).getProviders();
         var graph = method.compilationInfo.createGraph(debug, getCustomizedOptions(method, debug), CompilationIdentifier.INVALID_COMPILATION_ID, false);
         try (var s = debug.scope("Inline", graph, method, this)) {
@@ -898,11 +883,13 @@ public class CompileQueue {
                      * non-deterministic. This is why we are saving graphs to be published at the
                      * end of each round.
                      */
-                    unpublishedTrivialMethods.put(method, new UnpublishedTrivialMethods(CompilationGraph.encode(graph), checkNewlyTrivial(method, graph)));
+                    unpublishedTrivialMethods.put(method, new UnpublishedTrivialMethods(CompilationGraph.encode(graph), false));
                 }
             }
         } catch (Throwable ex) {
             throw debug.handle(ex);
+        } finally {
+            tooManyMatchingProfilesCheckEnabled = false;
         }
     }
 
@@ -936,14 +923,16 @@ public class CompileQueue {
             return originalMakeInlineDecision(method, callee);
         }
 
-        if (callee.compilationInfo.getCompilationGraph() == null) {
+        if (callee.compilationInfo.getCompilationGraph() == null || method.compilationInfo.isTrivialInliningDisabled()) {
             return false;
         }
 
-//         TODO: include original logic to include all trivial methods, cause why not? Or stick to own logic only?
-//        if (originalMakeInlineDecision(method, callee)) {
-//            return true;
-//        }
+        // TODO: include original logic to include all trivial methods, cause why not? Or stick to own logic only?
+        if (Boolean.getBoolean("combinedInlining")) {
+            if (originalMakeInlineDecision(method, callee)) {
+                return true;
+            }
+        }
 
         // TODO: find out how this is determined?
         if (callee.shouldBeInlined()) {
