@@ -13,8 +13,6 @@ import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
 import java.lang.reflect.Method;
-import java.util.ArrayList;
-import java.util.List;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
@@ -30,29 +28,37 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
-        if (Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
-            return;
-        }
-
         try {
-            RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
-            RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
+            RuntimeReflection.register(VirtualInvokeProfiler.class);
 
-            Method m = VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class);
-            Method m2 = VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling");
-            Method foo = VirtualInvokeProfiler.class.getDeclaredMethod("foo");
-            Method bar = VirtualInvokeProfiler.class.getDeclaredMethod("bar");
-            RuntimeReflection.register(m, m2, foo, bar);
+            if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+                RuntimeReflection.register(VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
+                RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
+                RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
+
+                RuntimeReflection.register(VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling"));
+            } else if (!Boolean.getBoolean("disableVirtualInlineCachePhase")) {
+                Method foo = VirtualInvokeProfiler.class.getDeclaredMethod("foo");
+                Method bar = VirtualInvokeProfiler.class.getDeclaredMethod("bar");
+
+                RuntimeReflection.register(foo, bar);
+            }
+
         } catch (NoSuchMethodException ex) {
             throw new RuntimeException("Failed to register method for reflection: " + ex.getMessage(), ex);
         }
-        RuntimeReflection.register(VirtualInvokeProfiler.class);
     }
 
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
         if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
-            suites.getHighTier().prependPhase(new InjectProfilingIntoVirtualCallsPhase());
+            System.out.println("Injecting virtual invoke profiling phase");
+            suites.getHighTier().prependPhase(new InjectVirtualInlineCachePhase());
+        }
+        // Mutually exclusive; can't do the virtual inline caching without profiling data or profiling enabled.
+        else if (!Boolean.getBoolean("disableVirtualInlineCachePhase") && Options.ProfileDataDumpFileName.getValue() != null) {
+            System.out.println("Injecting inline virtual invoke cache phase");
+            suites.getHighTier().prependPhase(new InjectInlineVirtualInvokeCachePhase());
         }
     }
 
