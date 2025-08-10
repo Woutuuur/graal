@@ -43,7 +43,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.oracle.svm.hosted.profile.CallSiteProfile;
-import com.oracle.svm.hosted.profile.InjectProfilingIntoVirtualCallsPhase;
 import com.oracle.svm.hosted.profile.VirtualInvokeProfileFeature;
 import jdk.vm.ci.meta.LineNumberTable;
 import org.graalvm.nativeimage.ImageSingletons;
@@ -341,7 +340,7 @@ public class CompileQueue {
             }).toList();
 
         if (tooManyMatchingProfilesCheckEnabled && matchingProfiles.size() > 1) {
-            System.out.println("tooManyMatchingProfilesCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
+//            System.out.println("tooManyMatchingProfilesCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
         }
 
         return matchingProfiles.size() == 1 ? matchingProfiles.getFirst() : null;
@@ -772,6 +771,8 @@ public class CompileQueue {
                 System.out.println("InliningPlugin: bci is -1 for method " + method.format("%H.%n(%p) %r") + ", args: " + Arrays.toString(args));
             }
 
+//            System.out.println("InliningPlugin: shouldInlineInvoke for method " + method.format("%H.%n(%p) %r") + ", bci: " + b.bci());
+
             if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method, b.bci()) && b.recursiveInliningDepth(method) == 0) {
                 numInlinedMethods++;
                 return InlineInfo.createStandardInlineInfo(method);
@@ -828,7 +829,7 @@ public class CompileQueue {
         }
     }
 
-    private final static float INLINE_PROFILES_PERCENTAGE = 0.04f;
+    private final static float INLINE_PROFILES_PERCENTAGE = 0.2f;
     private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
     private static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
@@ -917,31 +918,31 @@ public class CompileQueue {
         return optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled();
     }
 
+
     private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
-//        System.out.println("Make inline decision for " + method);
+        if (callee.compilationInfo.getCompilationGraph() == null) {
+            return false;
+        }
+
+        if (callee.shouldBeInlined()) {
+            return true;
+        }
+
+        if (!callee.canBeInlined() || method.compilationInfo.isTrivialInliningDisabled()) {
+            return false;
+        }
+
         if (callSiteProfiles.isEmpty()) {
             return originalMakeInlineDecision(method, callee);
         }
 
-        if (callee.compilationInfo.getCompilationGraph() == null || method.compilationInfo.isTrivialInliningDisabled()) {
-            return false;
-        }
-
-        // TODO: include original logic to include all trivial methods, cause why not? Or stick to own logic only?
         if (Boolean.getBoolean("combinedInlining")) {
             if (originalMakeInlineDecision(method, callee)) {
                 return true;
             }
         }
 
-        // TODO: find out how this is determined?
-        if (callee.shouldBeInlined()) {
-            return true;
-        }
-
-        CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
-
-        return matchingProfile != null;
+        return findMatchingCallSiteProfileForCallee(method, callee, invokeBci) != null;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
