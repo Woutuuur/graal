@@ -38,7 +38,7 @@ import java.util.stream.StreamSupport;
 
 import static com.oracle.svm.util.ReflectionUtil.lookupMethod;
 
-public class InjectInlineVirtualInvokeCachePhase extends BasePhase<HighTierContext> {
+public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
 
     private static final String[] EXCLUDED_PACKAGES = {
         "com.oracle.svm.core",
@@ -114,7 +114,7 @@ public class InjectInlineVirtualInvokeCachePhase extends BasePhase<HighTierConte
         Set<Invoke> handledInvokes = new HashSet<>();
 
         StreamSupport.stream(graph.getInvokes().spliterator(), false)
-            .filter(InjectInlineVirtualInvokeCachePhase::shouldInjectInlineCache)
+            .filter(VirtualInvokeInlineCachePhase::shouldInjectInlineCache)
             .filter(o -> !handledInvokes.contains(o))
             .forEach(invokeNode -> {
                 HostedMethod targetMethod = (HostedMethod) invokeNode.getTargetMethod();

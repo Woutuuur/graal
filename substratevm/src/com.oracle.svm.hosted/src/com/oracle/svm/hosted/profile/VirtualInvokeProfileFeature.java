@@ -58,7 +58,7 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
         // Mutually exclusive; can't do the virtual inline caching without profiling data or profiling enabled.
         else if (!Boolean.getBoolean("disableVirtualInlineCachePhase") && Options.ProfileDataDumpFileName.getValue() != null) {
             System.out.println("Injecting inline virtual invoke cache phase");
-            suites.getHighTier().prependPhase(new InjectInlineVirtualInvokeCachePhase());
+            suites.getHighTier().prependPhase(new VirtualInvokeInlineCachePhase());
         }
     }
 
