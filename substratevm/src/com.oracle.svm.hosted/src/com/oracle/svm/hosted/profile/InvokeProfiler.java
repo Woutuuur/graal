@@ -7,7 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
-public class VirtualInvokeProfiler {
+public class InvokeProfiler {
     static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[10000000];
     private static boolean profilingEnabled = false;
     private static volatile boolean profilingInProgress = false;

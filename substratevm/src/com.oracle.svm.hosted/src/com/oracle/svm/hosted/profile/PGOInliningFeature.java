@@ -16,7 +16,7 @@ import java.lang.reflect.Method;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
-public class VirtualInvokeProfileFeature implements InternalFeature  {
+public class PGOInliningFeature implements InternalFeature  {
 
     public static class Options {
 
@@ -29,17 +29,17 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     @Override
     public void duringSetup(DuringSetupAccess access) {
         try {
-            RuntimeReflection.register(VirtualInvokeProfiler.class);
+            RuntimeReflection.register(InvokeProfiler.class);
 
             if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
-                RuntimeReflection.register(VirtualInvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
-                RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> VirtualInvokeProfiler.enableProfiling());
-                RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> VirtualInvokeProfiler.dumpProfileData());
+                RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
+                RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> InvokeProfiler.enableProfiling());
+                RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> InvokeProfiler.dumpProfileData());
 
-                RuntimeReflection.register(VirtualInvokeProfiler.class.getDeclaredMethod("enableProfiling"));
+                RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("enableProfiling"));
             } else if (!Boolean.getBoolean("disableVirtualInlineCachePhase")) {
-                Method foo = VirtualInvokeProfiler.class.getDeclaredMethod("foo");
-                Method bar = VirtualInvokeProfiler.class.getDeclaredMethod("bar");
+                Method foo = InvokeProfiler.class.getDeclaredMethod("foo");
+                Method bar = InvokeProfiler.class.getDeclaredMethod("bar");
 
                 RuntimeReflection.register(foo, bar);
             }

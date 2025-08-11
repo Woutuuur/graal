@@ -131,8 +131,8 @@ public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
 
                         ValueNode receiver = invokeNode.getReceiver();
 
-                        ResolvedJavaMethod foo = context.getMetaAccess().lookupJavaMethod(lookupMethod(VirtualInvokeProfiler.class, "foo"));
-                        ResolvedJavaMethod bar = context.getMetaAccess().lookupJavaMethod(lookupMethod(VirtualInvokeProfiler.class, "bar"));
+                        ResolvedJavaMethod foo = context.getMetaAccess().lookupJavaMethod(lookupMethod(InvokeProfiler.class, "foo"));
+                        ResolvedJavaMethod bar = context.getMetaAccess().lookupJavaMethod(lookupMethod(InvokeProfiler.class, "bar"));
 
                         MergeNode mergeNode = graph.add(new MergeNode());
 

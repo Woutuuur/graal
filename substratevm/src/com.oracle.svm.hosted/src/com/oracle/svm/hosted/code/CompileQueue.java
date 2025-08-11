@@ -43,7 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
 import com.oracle.svm.hosted.profile.CallSiteProfile;
-import com.oracle.svm.hosted.profile.VirtualInvokeProfileFeature;
+import com.oracle.svm.hosted.profile.PGOInliningFeature;
 import jdk.vm.ci.meta.LineNumberTable;
 import org.graalvm.nativeimage.ImageSingletons;
 
@@ -834,7 +834,7 @@ public class CompileQueue {
     private static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
     static {
-        String profileDataDumpFileName = VirtualInvokeProfileFeature.Options.ProfileDataDumpFileName.getValue();
+        String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
         if (profileDataDumpFileName != null) {
             Path jsonFilePath = Path.of(profileDataDumpFileName);
             try {
