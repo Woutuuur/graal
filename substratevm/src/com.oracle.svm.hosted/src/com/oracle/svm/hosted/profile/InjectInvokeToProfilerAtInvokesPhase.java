@@ -16,7 +16,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.stream.StreamSupport;
 
-public class InjectVirtualInlineCachePhase extends BasePhase<HighTierContext> {
+public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierContext> {
 
     private static final String[] EXCLUDED_PACKAGES = {
         "com.oracle.svm.core",
@@ -49,7 +49,7 @@ public class InjectVirtualInlineCachePhase extends BasePhase<HighTierContext> {
         Set<Invoke> handledInvokes = new HashSet<>();
 
         StreamSupport.stream(graph.getInvokes().spliterator(), false)
-            .filter(InjectVirtualInlineCachePhase::shouldProfileInvoke)
+            .filter(InjectInvokeToProfilerAtInvokesPhase::shouldProfileInvoke)
             .filter(o -> !handledInvokes.contains(o))
             .forEach(invokeNode -> {
                 String callSiteSource = getSource(invokeNode);

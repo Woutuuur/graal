@@ -53,7 +53,7 @@ public class VirtualInvokeProfileFeature implements InternalFeature  {
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
         if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
             System.out.println("Injecting virtual invoke profiling phase");
-            suites.getHighTier().prependPhase(new InjectVirtualInlineCachePhase());
+            suites.getHighTier().prependPhase(new InjectInvokeToProfilerAtInvokesPhase());
         }
         // Mutually exclusive; can't do the virtual inline caching without profiling data or profiling enabled.
         else if (!Boolean.getBoolean("disableVirtualInlineCachePhase") && Options.ProfileDataDumpFileName.getValue() != null) {
