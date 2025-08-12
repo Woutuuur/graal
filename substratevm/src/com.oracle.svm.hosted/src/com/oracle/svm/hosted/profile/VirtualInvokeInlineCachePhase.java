@@ -1,17 +1,14 @@
 package com.oracle.svm.hosted.profile;
 
 import com.oracle.svm.hosted.meta.HostedMethod;
-import jdk.graal.compiler.bytecode.ResolvedJavaMethodBytecode;
 import jdk.graal.compiler.core.common.type.Stamp;
 import jdk.graal.compiler.core.common.type.StampFactory;
-import jdk.graal.compiler.core.common.type.StampPair;
 import jdk.graal.compiler.core.common.type.TypeReference;
 import jdk.graal.compiler.nodes.CallTargetNode;
 import jdk.graal.compiler.nodes.CallTargetNode.InvokeKind;
 import jdk.graal.compiler.nodes.EndNode;
 import jdk.graal.compiler.nodes.FixedNode;
 import jdk.graal.compiler.nodes.FixedWithNextNode;
-import jdk.graal.compiler.nodes.FrameState;
 import jdk.graal.compiler.nodes.IfNode;
 import jdk.graal.compiler.nodes.Invokable;
 import jdk.graal.compiler.nodes.Invoke;
@@ -35,8 +32,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.StreamSupport;
-
-import static com.oracle.svm.util.ReflectionUtil.lookupMethod;
 
 public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
 
@@ -68,54 +63,13 @@ public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
             Arrays.stream(EXCLUDED_CONTEXT_METHOD_FUZZY_PARTS).noneMatch(contextMethod::contains);
     }
 
-    private InvokeNode createInvokeToMethod(ResolvedJavaMethod method, StructuredGraph graph, StampPair stamp) {
-        return createInvokeToMethod(method, graph, ValueNode.EMPTY_ARRAY, InvokeKind.Static, stamp);
-    }
-
-    private InvokeNode createInvokeToMethod(ResolvedJavaMethod method, StructuredGraph graph) {
-        return createInvokeToMethod(method, graph, StampPair.createSingle(StampFactory.forVoid()));
-    }
-
-    private InvokeNode createInvokeToMethod(ResolvedJavaMethod method, StructuredGraph graph, ValueNode[] args, InvokeKind kind, StampPair returnStamp) {
-        CallTargetNode callTargetNode = graph.add(new MethodCallTargetNode(
-            kind,
-            method,
-            args,
-            returnStamp,
-            null
-        ));
-        InvokeNode invoke = graph.add(new InvokeNode(callTargetNode,0));
-        ValueNode[] stack = ValueNode.EMPTY_ARRAY;
-        if (!returnStamp.getTrustedStamp().equals(StampFactory.forVoid())) {
-            stack = new ValueNode[]{invoke};
-        }
-        FrameState stateAfter = graph.add(new FrameState(
-            null,
-            new ResolvedJavaMethodBytecode(method),
-            -1,
-            ValueNode.EMPTY_ARRAY,
-            stack,
-            stack.length,
-            null,
-            null,
-            ValueNode.EMPTY_ARRAY,
-            null,
-            FrameState.StackState.AfterPop
-        ));
-        invoke.setStateAfter(stateAfter);
-        invoke.setPolymorphic(false);
-        invoke.setUseForInlining(true);
-
-        return invoke;
-    }
+    Set<Invoke> handledInvokes = new HashSet<>();
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
-        Set<Invoke> handledInvokes = new HashSet<>();
-
         StreamSupport.stream(graph.getInvokes().spliterator(), false)
-            .filter(VirtualInvokeInlineCachePhase::shouldInjectInlineCache)
             .filter(o -> !handledInvokes.contains(o))
+            .filter(VirtualInvokeInlineCachePhase::shouldInjectInlineCache)
             .forEach(invokeNode -> {
                 HostedMethod targetMethod = (HostedMethod) invokeNode.getTargetMethod();
 
@@ -131,31 +85,26 @@ public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
 
                         ValueNode receiver = invokeNode.getReceiver();
 
-                        ResolvedJavaMethod foo = context.getMetaAccess().lookupJavaMethod(lookupMethod(InvokeProfiler.class, "foo"));
-                        ResolvedJavaMethod bar = context.getMetaAccess().lookupJavaMethod(lookupMethod(InvokeProfiler.class, "bar"));
-
                         MergeNode mergeNode = graph.add(new MergeNode());
 
                         FixedNode originalNext = invokeNode.next();
                         invokeNode.setNext(null);
                         mergeNode.setNext(originalNext);
 
-                        InvokeNode invokeToFoo = createInvokeToMethod(foo, graph);
-                        InvokeNode invokeToBar = createInvokeToMethod(bar, graph);
-
                         List<ValueNode> args = invokeNode.callTarget().arguments();
-                        InvokeNode invokeToImplementation = createInvokeToMethod(
-                            context.getMetaAccess().lookupJavaMethod(implementationMethod.getJavaMethod()),
-                            graph,
-                            args.toArray(ValueNode.EMPTY_ARRAY),
-                            InvokeKind.Special,
-                            StampPair.createSingle(returnStamp)
-                        );
+                        MethodCallTargetNode oldCallTarget = (MethodCallTargetNode) invokeNode.callTarget();
+                        CallTargetNode callTargetNode = graph.add(new MethodCallTargetNode(
+                                InvokeKind.Special,
+                                targetMethod,
+                                args.toArray(ValueNode.EMPTY_ARRAY),
+                                invokeNode.callTarget().returnStamp(),
+                                oldCallTarget.getTypeProfile()
+                        ));
+                        InvokeNode invokeToImplementation = graph.addOrUnique(new InvokeNode(callTargetNode, invokeNode.bci()));
+                        invokeToImplementation.setPolymorphic(false);
+                        invokeToImplementation.setUseForInlining(true);
                         FixedWithNextNode predecessor = (FixedWithNextNode) invokeNode.predecessor();
                         predecessor.setNext(null);
-
-                        invokeToFoo.setNext(invokeToImplementation);
-                        invokeToBar.setNext(invokeNode.asFixedNode());
 
                         EndNode cachedBranchEnd = graph.add(new EndNode());
                         EndNode slowPathEnd = graph.add(new EndNode());
@@ -167,7 +116,7 @@ public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
 
                         if (!returnStamp.equals(StampFactory.forVoid())) {
                             PhiNode phi = graph.addOrUnique(new ValuePhiNode(returnStamp, mergeNode));
-                            invokeNode.asNode().replaceAtUsages(phi, usage -> !(usage instanceof FrameState));
+                            invokeNode.asNode().replaceAtUsages(phi, usage -> !(usage.equals(invokeNode.stateAfter())));
                             phi.addInput(invokeToImplementation);
                             phi.addInput(invokeNode.asNode());
                         }
@@ -182,17 +131,22 @@ public class VirtualInvokeInlineCachePhase extends BasePhase<HighTierContext> {
                         IfNode ifInstanceOfCheck = graph.addOrUnique(
                             new IfNode(
                                 instanceOfNode,
-                                invokeToFoo,
-                                invokeToBar,
+                                invokeToImplementation,
+                                invokeNode.asFixedNode(),
                                 ProfileData.BranchProbabilityData.unknown()
                             )
                         );
 
                         predecessor.setNext(ifInstanceOfCheck);
 
+                        if (invokeNode.stateAfter() != null) {
+                            invokeToImplementation.setStateAfter(invokeNode.stateAfter().duplicate());
+                        }
+                        if (invokeNode.stateDuring() != null) {
+                            invokeToImplementation.setStateDuring(invokeNode.stateDuring().duplicate());
+                        }
+
                         handledInvokes.add(invokeNode);
-                        handledInvokes.add(invokeToBar);
-                        handledInvokes.add(invokeToFoo);
                         handledInvokes.add(invokeToImplementation);
                     }, () -> System.out.println("No implementation found for " + targetMethod));
             });
