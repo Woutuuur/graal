@@ -13,10 +13,46 @@ import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
 public class PGOInliningFeature implements InternalFeature  {
+
+    private final static float INLINE_PROFILES_PERCENTAGE = 0.2f;
+    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
+    private static Set<CallSiteProfile> callSiteProfilesToInline = null;
+
+    public static Set<CallSiteProfile> getCallSiteProfilesToInline() {
+        return callSiteProfilesToInline;
+    }
+
+    public static boolean performPGOBasedInlining() {
+        return callSiteProfilesToInline != null;
+    }
+
+    static {
+        String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
+        if (profileDataDumpFileName != null) {
+            Path jsonFilePath = Path.of(profileDataDumpFileName);
+            try {
+                String json = Files.readString(jsonFilePath);
+                callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
+
+                int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
+                callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
+
+                System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    }
 
     public static class Options {
 

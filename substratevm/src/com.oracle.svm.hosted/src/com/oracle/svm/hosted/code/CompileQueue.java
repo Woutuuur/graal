@@ -41,10 +41,16 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.StreamSupport;
 
 import com.oracle.svm.hosted.profile.CallSiteProfile;
+import com.oracle.svm.hosted.profile.InjectInvokeToProfilerAtInvokesPhase;
 import com.oracle.svm.hosted.profile.PGOInliningFeature;
+import jdk.graal.compiler.phases.BasePhase;
+import jdk.vm.ci.meta.JavaTypeProfile;
 import jdk.vm.ci.meta.LineNumberTable;
+import jdk.vm.ci.meta.ResolvedJavaType;
+import jdk.vm.ci.meta.TriState;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;
@@ -322,28 +328,33 @@ public class CompileQueue {
         }
     }
 
-    private boolean tooManyMatchingProfilesCheckEnabled = false;
-
     private CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
-        List<CallSiteProfile> matchingProfiles = callSiteProfilesToInline.stream()
-            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
-            .filter(profile -> {
-                LineNumberTable lineNumberTable = contextMethod.getLineNumberTable();
-                if (lineNumberTable == null || invokeBci == -1) {
-                    // Just accept it, we'll reject it anyway if there are multiple matching for this contextMethod/callee combo
-                    return true;
-                }
-                int lineNumber = lineNumberTable.getLineNumber(invokeBci);
-                String fileName = contextMethod.getDeclaringClass().getSourceFileName();
-                String source = String.format("%s:%d", fileName, lineNumber);
-                return source.equals(profile.getSource());
-            }).toList();
+        return findMatchingCallSiteProfileForCallee(contextMethod, callee, invokeBci, true);
+    }
 
-        if (tooManyMatchingProfilesCheckEnabled && matchingProfiles.size() > 1) {
-//            System.out.println("tooManyMatchingProfilesCheckEnabled is true, but invokeBci is -1 for method " + contextMethod.getName() + " and callee " + callee.getName());
+    private static CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci, boolean isDirect) {
+        LineNumberTable lineNumberTable = contextMethod.getLineNumberTable();
+        if (lineNumberTable == null || invokeBci == -1) {
+            return null;
         }
 
-        return matchingProfiles.size() == 1 ? matchingProfiles.getFirst() : null;
+        int lineNumber = lineNumberTable.getLineNumber(invokeBci);
+        String fileName = contextMethod.getDeclaringClass().getSourceFileName();
+        String source = String.format("%s:%d", fileName, lineNumber);
+
+        List<CallSiteProfile> matchingProfiles = PGOInliningFeature.getCallSiteProfilesToInline().stream()
+            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
+            .filter(profile -> source.equals(profile.getSource()))
+            .limit(2)
+            .toList();
+
+        if (matchingProfiles.size() != 1) {
+            return null;
+        }
+
+        CallSiteProfile matchingProfile = matchingProfiles.getFirst();
+
+        return isDirect == matchingProfile.isDirectCall() ? matchingProfile : null;
     }
 
     protected class InlineTask implements Task {
@@ -766,13 +777,6 @@ public class CompileQueue {
 
         @Override
         public InlineInfo shouldInlineInvoke(GraphBuilderContext b, ResolvedJavaMethod method, ValueNode[] args) {
-
-            if (b.bci() == -1) {
-                System.out.println("InliningPlugin: bci is -1 for method " + method.format("%H.%n(%p) %r") + ", args: " + Arrays.toString(args));
-            }
-
-//            System.out.println("InliningPlugin: shouldInlineInvoke for method " + method.format("%H.%n(%p) %r") + ", bci: " + b.bci());
-
             if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method, b.bci()) && b.recursiveInliningDepth(method) == 0) {
                 numInlinedMethods++;
                 return InlineInfo.createStandardInlineInfo(method);
@@ -829,32 +833,8 @@ public class CompileQueue {
         }
     }
 
-    private final static float INLINE_PROFILES_PERCENTAGE = 0.2f;
-    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
-    private static Set<CallSiteProfile> callSiteProfilesToInline = null;
-
-    static {
-        String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
-        if (profileDataDumpFileName != null) {
-            Path jsonFilePath = Path.of(profileDataDumpFileName);
-            try {
-                String json = Files.readString(jsonFilePath);
-                callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
-
-                int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
-                callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
-
-                System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
-
     @SuppressWarnings("try")
     private void doInline(DebugContext debug, HostedMethod method) {
-        tooManyMatchingProfilesCheckEnabled = true;
         var providers = runtimeConfig.lookupBackend(method).getProviders();
         var graph = method.compilationInfo.createGraph(debug, getCustomizedOptions(method, debug), CompilationIdentifier.INVALID_COMPILATION_ID, false);
         try (var s = debug.scope("Inline", graph, method, this)) {
@@ -889,8 +869,6 @@ public class CompileQueue {
             }
         } catch (Throwable ex) {
             throw debug.handle(ex);
-        } finally {
-            tooManyMatchingProfilesCheckEnabled = false;
         }
     }
 
@@ -918,7 +896,6 @@ public class CompileQueue {
         return optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled();
     }
 
-
     private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
         if (callee.compilationInfo.getCompilationGraph() == null) {
             return false;
@@ -932,7 +909,7 @@ public class CompileQueue {
             return false;
         }
 
-        if (callSiteProfiles.isEmpty()) {
+        if (!PGOInliningFeature.performPGOBasedInlining()) {
             return originalMakeInlineDecision(method, callee);
         }
 
@@ -1399,6 +1376,7 @@ public class CompileQueue {
                 return result;
             }
         } catch (Throwable ex) {
+            ex.printStackTrace();
             GraalError error = ex instanceof GraalError ? (GraalError) ex : new GraalError(ex);
             error.addContext("method: " + method.format("%r %H.%n(%p)") + "  [" + reason + "]");
             throw error;
