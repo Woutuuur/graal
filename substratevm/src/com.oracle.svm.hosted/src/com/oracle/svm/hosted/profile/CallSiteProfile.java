@@ -15,6 +15,8 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
     String targetMethod;
     boolean isDirectCall;
 
+    boolean isMatched = false;
+
     public String getSource() {
         return source;
     }
@@ -27,8 +29,24 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
         return isDirectCall;
     }
 
+    public boolean isIndirectCall() {
+        return !isDirectCall;
+    }
+
     public long getTotalCount() {
         return totalCount;
+    }
+
+    public Map<String, Long> getReceiverCounts() {
+        return receiverCounts;
+    }
+
+    public void setIsMatched(boolean isUsedForInlining) {
+        this.isMatched = isUsedForInlining;
+    }
+
+    public boolean isMatched() {
+        return isMatched;
     }
 
     protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
