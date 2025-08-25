@@ -36,13 +36,16 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
         "HashMap"
     };
 
-    private static boolean shouldProfileInvoke(Invoke invoke) {
+    public static boolean shouldProfileInvoke(Invoke invoke) {
         String fullyQualifiedName = invoke.callTarget().targetMethod().format("%H.%n(%p)");
         String contextMethod = invoke.getContextMethod().toString();
 
         return Arrays.stream(EXCLUDED_PACKAGES).noneMatch(fullyQualifiedName::startsWith) &&
                Arrays.stream(EXCLUDED_CONTEXT_METHOD_FUZZY_PARTS).noneMatch(contextMethod::contains);
     }
+
+    private static int numProfileInvokesInserted = 0;
+    private static int totalInvokes = 0;
 
     @Override
     protected void run(StructuredGraph graph, HighTierContext context) {
@@ -52,13 +55,18 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
             .filter(InjectInvokeToProfilerAtInvokesPhase::shouldProfileInvoke)
             .filter(o -> !handledInvokes.contains(o))
             .forEach(invokeNode -> {
+                totalInvokes++;
                 String callSiteSource = getSource(invokeNode);
                 ConstantNode callSiteSourceConstant = ConstantNode.forConstant(context.getConstantReflection().forString(callSiteSource), context.getMetaAccess());
 
                 String targetMethodName = invokeNode.callTarget().targetMethod().format("%H.%n(%p):%r");
                 ConstantNode targetMethodNameConstant = ConstantNode.forConstant(context.getConstantReflection().forString(targetMethodName), context.getMetaAccess());
 
-                ConstantNode isDirectConstant = ConstantNode.forConstant(JavaConstant.forBoolean(invokeNode.callTarget().invokeKind().isDirect()), context.getMetaAccess());
+                ConstantNode isDirectConstant = ConstantNode.forConstant(JavaConstant.forBoolean(invokeNode.getInvokeKind().isDirect()), context.getMetaAccess());
+
+                if (callSiteSource != null && targetMethodName != null) {
+                    numProfileInvokesInserted++;
+                }
 
                 ValueNode receiver = invokeNode.callTarget().invokeKind().isDirect() ?
                     graph.addOrUnique(ConstantNode.forConstant(context.getConstantReflection().forString(invokeNode.callTarget().targetMethod().getDeclaringClass().toJavaName()), context.getMetaAccess())) :
@@ -74,6 +82,8 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
                 graph.addBeforeFixed(invokeNode.asFixedNode(), callSiteProfilerNode);
                 handledInvokes.add(invokeNode);
             });
+
+//        System.out.println("Inserted " + numProfileInvokesInserted + " profiling invokes out of " + totalInvokes + " total invokes.");
     }
 
     private static String getSource(Invokable invokeNode) {
