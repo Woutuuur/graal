@@ -4,6 +4,7 @@ import com.oracle.svm.core.feature.AutomaticallyRegisteredFeature;
 import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.option.HostedOptionKey;
+import com.oracle.svm.hosted.FeatureImpl;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.tiers.Suites;
@@ -16,9 +17,12 @@ import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
@@ -62,8 +66,45 @@ public class PGOInliningFeature implements InternalFeature  {
         // @formatter:on
     }
 
+    private static String methodSignature(Method m) {
+        String returnType = m.getReturnType().getTypeName().substring(m.getReturnType().getTypeName().lastIndexOf(".") + 1);
+        String parameters = "(" + Arrays.stream(m.getParameterTypes()).map(c -> c.getTypeName().substring(c.getTypeName().lastIndexOf(".") + 1)).collect(Collectors.joining(", ")) + ")";
+        return m.getDeclaringClass().getName() + "." + m.getName() + parameters + ":" + returnType;
+    }
+
     @Override
     public void duringSetup(DuringSetupAccess access) {
+        FeatureImpl.DuringSetupAccessImpl accessImpl = (FeatureImpl.DuringSetupAccessImpl) access;
+
+        callSiteProfilesToInline.stream()
+            .filter(CallSiteProfile::isIndirectCall)
+            .forEach(profile -> {
+                try {
+                    Class<?> clazz = access.findClassByName(profile.getTargetClassName());
+
+                    System.out.println("Looking for method for call site profile: " + profile.getTargetMethod());
+                    Stream.of(clazz.getDeclaredMethods(), clazz.getMethods()).flatMap(Stream::of)
+                        .distinct()
+                        .filter(m -> methodSignature(m).equals(profile.getTargetMethod()))
+                        .findFirst().ifPresentOrElse(m -> {
+                            accessImpl.findSubclasses(clazz).stream()
+                                .filter(subClass -> profile.receiverCounts.containsKey(subClass.getName()))
+                                .forEach(subClass -> {
+                                    try {
+                                        Method concreteMethod = subClass.getMethod(m.getName(), m.getParameterTypes());
+                                        profile.receiverNameConcreteMethods.put(subClass.getName(), concreteMethod);
+                                    } catch (NoSuchMethodException e) {
+                                        System.out.println("No method found for " + m.getName() + " " + Arrays.toString(m.getParameterTypes()));
+                                    }
+                                });
+                        }, () -> System.out.println("No method found for call site profile: " + profile.getTargetMethod()));
+
+                    System.out.println();
+                } catch (Exception e) {
+                    System.out.println("ERROR: " + e.getMessage());
+                }
+            });
+
         try {
             RuntimeReflection.register(InvokeProfiler.class);
 
@@ -98,4 +139,10 @@ public class PGOInliningFeature implements InternalFeature  {
         }
     }
 
+//    @Override
+//    public void registerGraphBuilderPlugins(Providers providers, GraphBuilderConfiguration.Plugins plugins, ParsingReason reason) {
+//        plugins.appendNodePlugin(new ICPlugin());
+//
+//        InternalFeature.super.registerGraphBuilderPlugins(providers, plugins, reason);
+//    }
 }

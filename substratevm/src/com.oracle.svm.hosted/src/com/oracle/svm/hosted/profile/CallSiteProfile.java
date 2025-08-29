@@ -1,5 +1,6 @@
 package com.oracle.svm.hosted.profile;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,6 +15,7 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
     String source;
     String targetMethod;
     boolean isDirectCall;
+    final Map<String, Method> receiverNameConcreteMethods = new HashMap<>();
 
     boolean isMatched = false;
 
@@ -51,6 +53,11 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
 
     protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
         return new ArrayList<>(receiverCounts.entrySet());
+    }
+
+    public String getTargetClassName() {
+        int lastDotIndex = this.getTargetMethod().lastIndexOf('.');
+        return this.getTargetMethod().substring(0, lastDotIndex);
     }
 
     public static List<CallSiteProfile> loadFromJSON(String json) {
