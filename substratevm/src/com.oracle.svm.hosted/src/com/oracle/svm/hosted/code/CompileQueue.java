@@ -27,30 +27,20 @@ package com.oracle.svm.hosted.code;
 import static com.oracle.svm.hosted.code.SubstrateCompilationDirectives.DEOPT_TARGET_METHOD;
 
 import java.lang.annotation.Annotation;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Comparator;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.stream.StreamSupport;
 
-import com.oracle.svm.hosted.profile.CallSiteProfile;
-import com.oracle.svm.hosted.profile.InjectInvokeToProfilerAtInvokesPhase;
 import com.oracle.svm.hosted.profile.PGOInliningFeature;
-import jdk.graal.compiler.phases.BasePhase;
-import jdk.vm.ci.meta.JavaTypeProfile;
+import jdk.graal.compiler.java.CallSiteProfile;
 import jdk.vm.ci.meta.LineNumberTable;
-import jdk.vm.ci.meta.ResolvedJavaType;
-import jdk.vm.ci.meta.TriState;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;

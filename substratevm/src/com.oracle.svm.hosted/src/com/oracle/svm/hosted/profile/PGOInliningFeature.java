@@ -5,6 +5,8 @@ import com.oracle.svm.core.feature.InternalFeature;
 import com.oracle.svm.core.jdk.RuntimeSupport;
 import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.hosted.FeatureImpl;
+import jdk.graal.compiler.java.BytecodeParser;
+import jdk.graal.compiler.java.CallSiteProfile;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.tiers.Suites;
@@ -21,8 +23,9 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import static jdk.graal.compiler.java.BytecodeParser.methodSignature;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
@@ -51,6 +54,8 @@ public class PGOInliningFeature implements InternalFeature  {
                 int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
                 callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
 
+                BytecodeParser.callSiteProfilesToInline = callSiteProfilesToInline;
+
                 System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
             } catch (Exception e) {
                 e.printStackTrace();
@@ -64,12 +69,6 @@ public class PGOInliningFeature implements InternalFeature  {
         @Option(help = "File containing profiling data for PGO based inlining", type = OptionType.User)
         public static final HostedOptionKey<String> ProfileDataDumpFileName = new HostedOptionKey<>(null);
         // @formatter:on
-    }
-
-    private static String methodSignature(Method m) {
-        String returnType = m.getReturnType().getTypeName().substring(m.getReturnType().getTypeName().lastIndexOf(".") + 1);
-        String parameters = "(" + Arrays.stream(m.getParameterTypes()).map(c -> c.getTypeName().substring(c.getTypeName().lastIndexOf(".") + 1)).collect(Collectors.joining(", ")) + ")";
-        return m.getDeclaringClass().getName() + "." + m.getName() + parameters + ":" + returnType;
     }
 
     @Override
@@ -138,11 +137,4 @@ public class PGOInliningFeature implements InternalFeature  {
             suites.getHighTier().prependPhase(new VirtualInvokeInlineCachePhase());
         }
     }
-
-//    @Override
-//    public void registerGraphBuilderPlugins(Providers providers, GraphBuilderConfiguration.Plugins plugins, ParsingReason reason) {
-//        plugins.appendNodePlugin(new ICPlugin());
-//
-//        InternalFeature.super.registerGraphBuilderPlugins(providers, plugins, reason);
-//    }
 }

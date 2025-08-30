@@ -1,6 +1,7 @@
 package com.oracle.svm.hosted.profile;
 
 import com.oracle.svm.core.heap.NoAllocationVerifier;
+import jdk.graal.compiler.java.CallSiteProfile;
 
 import java.util.ArrayList;
 import java.util.Arrays;

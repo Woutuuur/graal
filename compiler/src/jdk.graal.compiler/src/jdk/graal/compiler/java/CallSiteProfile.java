@@ -1,4 +1,4 @@
-package com.oracle.svm.hosted.profile;
+package jdk.graal.compiler.java;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -10,12 +10,12 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class CallSiteProfile implements Comparable<CallSiteProfile> {
-    long totalCount;
-    HashMap<String, Long> receiverCounts;
-    String source;
-    String targetMethod;
+    public long totalCount;
+    public HashMap<String, Long> receiverCounts;
+    public String source;
+    public String targetMethod;
     boolean isDirectCall;
-    final Map<String, Method> receiverNameConcreteMethods = new HashMap<>();
+    public final Map<String, Method> receiverNameConcreteMethods = new HashMap<>();
 
     boolean isMatched = false;
 
