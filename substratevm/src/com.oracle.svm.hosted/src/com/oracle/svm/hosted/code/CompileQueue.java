@@ -887,6 +887,10 @@ public class CompileQueue {
     }
 
     private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
+        if (!PGOInliningFeature.performPGOBasedInlining()) {
+            return originalMakeInlineDecision(method, callee);
+        }
+
         if (callee.compilationInfo.getCompilationGraph() == null) {
             return false;
         }
@@ -897,10 +901,6 @@ public class CompileQueue {
 
         if (!callee.canBeInlined() || method.compilationInfo.isTrivialInliningDisabled()) {
             return false;
-        }
-
-        if (!PGOInliningFeature.performPGOBasedInlining()) {
-            return originalMakeInlineDecision(method, callee);
         }
 
         if (Boolean.getBoolean("combinedInlining")) {
