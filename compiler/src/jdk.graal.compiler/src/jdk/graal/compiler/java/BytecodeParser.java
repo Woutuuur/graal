@@ -267,14 +267,11 @@ import java.util.BitSet;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Formatter;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import jdk.internal.misc.Unsafe;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.Equivalence;
 import org.graalvm.word.LocationIdentity;
@@ -1771,15 +1768,12 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         return new StateSplitProxyNode(fieldRead);
     }
 
-    AbstractBeginNode lastByteCodeExceptionCheckTrueSuccessor = null;
-
     public ValueNode maybeEmitExplicitNullCheck(ValueNode receiver) {
         if (StampTool.isPointerNonNull(receiver.stamp(NodeView.DEFAULT)) || !needsExplicitNullCheckException(receiver)) {
             return receiver;
         }
         LogicNode condition = genUnique(IsNullNode.create(receiver));
         AbstractBeginNode passingSuccessor = emitBytecodeExceptionCheck(condition, false, BytecodeExceptionKind.NULL_POINTER);
-        lastByteCodeExceptionCheckTrueSuccessor = passingSuccessor;
         return genUnique(PiNode.create(receiver, objectNonNull(), passingSuccessor));
     }
 
@@ -1936,129 +1930,107 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
     public static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
+    private static String methodReturnType(Method m) {
+        return m.getReturnType().getTypeName().substring(m.getReturnType().getTypeName().lastIndexOf(".") + 1);
+    }
+
+    private static String methodParameters(Method m) {
+        return "(" + Arrays.stream(m.getParameterTypes()).map(c -> c.getTypeName().substring(c.getTypeName().lastIndexOf(".") + 1)).collect(Collectors.joining(", ")) + ")";
+    }
+
+    public static String methodShortSignature(Method m) {
+        return m.getName() + methodParameters(m) + ":" + methodReturnType(m);
+    }
+
     public static String methodSignature(Method m) {
-        String returnType = m.getReturnType().getTypeName().substring(m.getReturnType().getTypeName().lastIndexOf(".") + 1);
-        String parameters = "(" + Arrays.stream(m.getParameterTypes()).map(c -> c.getTypeName().substring(c.getTypeName().lastIndexOf(".") + 1)).collect(Collectors.joining(", ")) + ")";
-        return m.getDeclaringClass().getName() + "." + m.getName() + parameters + ":" + returnType;
+        return m.getDeclaringClass().getName() + "." + m.getName() + methodParameters(m) + ":" + methodReturnType(m);
     }
 
     public static String methodSignature(ResolvedJavaMethod m) {
         return m.format("%H.%n(%p):%r");
     }
 
-    protected void genInvokeVirtual(ResolvedJavaMethod resolvedTarget) {
-        int cpi = stream.readCPI();
-
-        lastByteCodeExceptionCheckTrueSuccessor = null;
-
+    protected void originalGenInvokeVirtual(ResolvedJavaMethod resolvedTarget, int cpi) {
         /*
          * Special handling for runtimes that rewrite an invocation of MethodHandle.invoke(...) or
          * MethodHandle.invokeExact(...) to a static adapter. HotSpot does this - see
          * https://wiki.openjdk.java.net/display/HotSpot/Method+handles+and+invokedynamic
          */
-
-        if (!resolvedTarget.toString().contains("foo") || callSiteProfilesToInline == null) {
-            // Original impl here:
-
-            if (genDynamicInvokeHelper(resolvedTarget, cpi, INVOKEVIRTUAL)) {
-                return;
-            }
-
-            // TODO: Never reached?
-            ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
-            appendInvoke(InvokeKind.Virtual, resolvedTarget, args, null);
+        if (genDynamicInvokeHelper(resolvedTarget, cpi, INVOKEVIRTUAL)) {
             return;
         }
 
-        graph.getDebug().forceDump(graph, "genInvokeVirtual 0");
-
-//        if (resolvedTarget.toString().contains("foo")) {
-//            genDynamicInvokeHelper(resolvedTarget, cpi, INVOKEVIRTUAL);
-//            graph.getDebug().forceDump(graph, "genInvokeVirtual end");
-//            return;
-//        }
-
+        // TODO: Never reached?
         ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
-        JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
+        appendInvoke(InvokeKind.Virtual, resolvedTarget, args, null);
+    }
 
-//        System.out.println("Looking for call site profile for: " + resolvedTarget.format("%H.%n(%p):%r"));
+    protected void genInvokeVirtual(ResolvedJavaMethod resolvedTarget) {
+        int cpi = stream.readCPI();
+
+        if (callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
+            originalGenInvokeVirtual(resolvedTarget, cpi);
+            return;
+        }
+
         callSiteProfilesToInline.stream()
             .filter(p -> p.targetMethod.equals(methodSignature(resolvedTarget)))
-            .findFirst().ifPresent(p -> {
-//                System.out.println("Found call site profile: " + p);
-                // TODO: Step 2: Get N hottest concrete methods and create a multi-way if-chain here
-                p.receiverNameConcreteMethods.entrySet().stream().map(e -> {
-//                    System.out.println("Trying to resolve ResolvedJavaMethod for: " + e.getKey() + " -> " + e.getValue());
-                    try {
-                        return getMetaAccess().lookupJavaMethod(e.getValue());
-                    } catch (Exception ex) {
-                        System.err.println("❌ Could not resolve method: " + e.getValue());
-                        return null;
-                    }
-                }).findFirst().ifPresent(m -> {
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual start");
-                    // TODO: Step 1: Create a guard that checks the receiver type and calls the concrete method if it matches, otherwise falls through to the original virtual call
-                    System.out.println("✅ Inlining concrete method: " + methodSignature(m) + " for call site profile: " + p);
+            .flatMap(p -> p.receiverNameConcreteMethods.values().stream().map(v -> getMetaAccess().lookupJavaMethod(v)))
+            .filter(ResolvedJavaMethod::hasReceiver)
+            .findFirst()
+            .ifPresentOrElse(m -> {
+//                System.out.println("Inlining " + methodSignature(m) + " for callsite " + methodSignature(resolvedTarget) + " in " + methodSignature(method));
 
-                    FixedWithNextNode prev = lastInstr;
+                ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
+                JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
 
-                    TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
-                    LogicNode instanceOfNode = genUnique(createInstanceOf(checkedType, args[0], null));
+                FixedWithNextNode prev = lastInstr;
 
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after instanceof created");
+                TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
+                LogicNode instanceOfNode = genUnique(createInstanceOf(checkedType, args[0], null));
 
-                    BeginNode concreteInvokeBegin = graph.add(new BeginNode());
-                    lastInstr = concreteInvokeBegin;
+                BeginNode concreteInvokeBegin = graph.add(new BeginNode());
+                lastInstr = concreteInvokeBegin;
 
-                    ValueNode[] argsCopy = Arrays.copyOf(args, args.length);
+                ValueNode[] argsCopy = Arrays.copyOf(args, args.length);
 
-                    // instanceof already checks null, so we can assume non-null for the cached path
-                    argsCopy[0] = genUnique(PiNode.create(args[0], objectNonNull(), concreteInvokeBegin));
+                appendInvoke(InvokeKind.Special, m, argsCopy, null);
+                FixedWithNextNode concreteInvokeNext = lastInstr;
+                ValueNode concreteInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(m.getSignature().getReturnKind());
 
-                    appendInvoke(InvokeKind.Special, m, argsCopy, null);
-                    FixedWithNextNode concreteInvokeNext = lastInstr;
-                    ValueNode concreteInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(m.getSignature().getReturnKind());
+                BeginNode virtualInvokeBegin = graph.add(new BeginNode());
+                lastInstr = virtualInvokeBegin;
 
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after concrete invoke created");
+                Invokable invokeToVirtual = appendInvoke(InvokeKind.Virtual, resolvedTarget, args, null);
+                FixedWithNextNode virtualInvokeNext = lastInstr;
+                ValueNode virtualInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(resolvedTarget.getSignature().getReturnKind());
 
-                    BeginNode virtualInvokeBegin = graph.add(new BeginNode());
-                    lastInstr = virtualInvokeBegin;
+                BranchProbabilityData profileData = BranchProbabilityData.create(0.8, ProfileSource.PROFILED);
+                IfNode ifNode = (IfNode) genIfNode(instanceOfNode, concreteInvokeBegin, virtualInvokeBegin, profileData);
 
-                    Invokable invokeToVirtual = appendInvoke(InvokeKind.Virtual, resolvedTarget, args, null);
-                    FixedWithNextNode virtualInvokeNext = lastInstr;
-                    ValueNode virtualInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(resolvedTarget.getSignature().getReturnKind());
+                EndNode concreteInvokeEnd = graph.add(new EndNode());
+                EndNode virtualInvokeEnd = graph.add(new EndNode());
+                concreteInvokeNext.setNext(concreteInvokeEnd);
+                virtualInvokeNext.setNext(virtualInvokeEnd);
 
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after virtual invoke created");
+                MergeNode merge = graph.add(new MergeNode());
+                merge.addForwardEnd(concreteInvokeEnd);
+                merge.addForwardEnd(virtualInvokeEnd);
 
-                    BranchProbabilityData profileData = BranchProbabilityData.create(0.8, ProfileSource.PROFILED);
-                    IfNode ifNode = (IfNode) genIfNode(instanceOfNode, concreteInvokeBegin, virtualInvokeBegin, profileData);
+                if (returnType != JavaKind.Void) {
+                    ValueNode phi = add(new ValuePhiNode(
+                        ((Invoke) invokeToVirtual).asNode().stamp(NodeView.DEFAULT),
+                        merge,
+                        concreteInvokeReturn,
+                        virtualInvokeReturn
+                    ));
+                    frameState.pushReturn(returnType, phi);
+                }
 
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after if created");
-
-                    EndNode concreteInvokeEnd = graph.add(new EndNode());
-                    EndNode virtualInvokeEnd = graph.add(new EndNode());
-                    concreteInvokeNext.setNext(concreteInvokeEnd);
-                    virtualInvokeNext.setNext(virtualInvokeEnd);
-
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after ends created");
-
-                    MergeNode merge = graph.add(new MergeNode());
-                    merge.addForwardEnd(concreteInvokeEnd);
-                    merge.addForwardEnd(virtualInvokeEnd);
-
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual after merge created");
-
-                    if (returnType != JavaKind.Void) {
-                        ValueNode phi = add(new ValuePhiNode(((Invoke) invokeToVirtual).asNode().stamp(NodeView.DEFAULT), merge, concreteInvokeReturn, virtualInvokeReturn));
-                        frameState.pushReturn(returnType, phi);
-                    }
-
-                    prev.setNext(graph.addOrUniqueWithInputs(ifNode));
-                    lastInstr = merge;
-
-                    graph.getDebug().forceDump(graph, "genInvokeVirtual end");
-                });
-            });
+                prev.setNext(graph.addOrUniqueWithInputs(ifNode));
+                lastInstr = merge;
+                setStateAfter(merge);
+            }, () -> originalGenInvokeVirtual(resolvedTarget, cpi));
     }
 
     private boolean genDynamicInvokeHelper(ResolvedJavaMethod target, int cpi, int opcode) {
