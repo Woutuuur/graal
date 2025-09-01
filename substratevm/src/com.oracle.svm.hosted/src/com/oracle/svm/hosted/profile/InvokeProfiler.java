@@ -17,20 +17,10 @@ public class InvokeProfiler {
         profilingEnabled = true;
     }
 
-    static void foo() {
-        System.out.println("foo");
-    }
-
-    static void bar() {
-        System.out.println("bar");
-    }
-
-
     static void profileVirtualInvoke(boolean isDirect, String source, String targetMethodName, Object receiver, int callSiteId) {
         if (!profilingEnabled || NoAllocationVerifier.isActive() || profilingInProgress) {
             return;
         }
-
 
         CallSiteProfile callSiteProfile = callSiteProfiles[callSiteId];
 
