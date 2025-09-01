@@ -21,6 +21,7 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
     private static final String[] EXCLUDED_PACKAGES = {
         "com.oracle.svm.core",
         "com.oracle.svm.hosted.profile",
+        "jdk.graal.compiler",
         "java.util",
         "jdk.internal",
         "java.lang.Object",
