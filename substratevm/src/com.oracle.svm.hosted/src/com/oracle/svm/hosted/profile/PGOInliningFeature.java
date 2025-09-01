@@ -23,9 +23,8 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.stream.Stream;
 
-import static jdk.graal.compiler.java.BytecodeParser.methodSignature;
+import static jdk.graal.compiler.java.BytecodeParser.methodShortSignature;
 
 @AutomaticallyRegisteredFeature
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
@@ -40,7 +39,9 @@ public class PGOInliningFeature implements InternalFeature  {
     }
 
     public static boolean performPGOBasedInlining() {
-        return callSiteProfilesToInline != null;
+        return !Boolean.getBoolean("disableInlineCachePhase") &&
+            Options.ProfileDataDumpFileName.getValue() != null &&
+            callSiteProfilesToInline != null;
     }
 
     static {
@@ -71,41 +72,39 @@ public class PGOInliningFeature implements InternalFeature  {
         // @formatter:on
     }
 
-    @Override
-    public void duringSetup(DuringSetupAccess access) {
-        FeatureImpl.DuringSetupAccessImpl accessImpl = (FeatureImpl.DuringSetupAccessImpl) access;
-
+    private void determineConcreteMethodsForProfiledInvokes(FeatureImpl.DuringSetupAccessImpl access) {
         callSiteProfilesToInline.stream()
             .filter(CallSiteProfile::isIndirectCall)
             .forEach(profile -> {
-                try {
-                    Class<?> clazz = access.findClassByName(profile.getTargetClassName());
+                profile.getReceiverCounts().keySet().forEach(receiver -> {
+                    Class<?> subClass = access.findClassByName(receiver);
 
-                    System.out.println("Looking for method for call site profile: " + profile.getTargetMethod());
-                    Stream.of(clazz.getDeclaredMethods(), clazz.getMethods()).flatMap(Stream::of)
-                        .distinct()
-                        .filter(m -> methodSignature(m).equals(profile.getTargetMethod()))
-                        .findFirst().ifPresentOrElse(m -> {
-                            accessImpl.findSubclasses(clazz).stream()
-                                .filter(subClass -> profile.receiverCounts.containsKey(subClass.getName()))
-                                .forEach(subClass -> {
-                                    try {
-                                        Method concreteMethod = subClass.getMethod(m.getName(), m.getParameterTypes());
-                                        profile.receiverNameConcreteMethods.put(subClass.getName(), concreteMethod);
-                                    } catch (NoSuchMethodException e) {
-                                        System.out.println("No method found for " + m.getName() + " " + Arrays.toString(m.getParameterTypes()));
-                                    }
-                                });
-                        }, () -> System.out.println("No method found for call site profile: " + profile.getTargetMethod()));
+                    if (subClass == null) {
+                        return;
+                    }
 
-                    System.out.println();
-                } catch (Exception e) {
-                    System.out.println("ERROR: " + e.getMessage());
-                }
+                    Arrays.stream(subClass.getDeclaredMethods())
+                        .filter(m -> {
+                            String shortSignatureTargetMethod = profile.targetMethod.substring(profile.targetMethod.lastIndexOf('.') + 1);
+                            return methodShortSignature(m).equals(shortSignatureTargetMethod);
+                        })
+                        .forEach(m -> {
+                            System.out.println("Concrete method: " + m + " for receiver: " + receiver + " for profile: " + profile.getTargetMethod());
+                            profile.receiverNameConcreteMethods.put(subClass.getName(), m);
+                        });
+                });
             });
+    }
+
+    @Override
+    public void duringSetup(DuringSetupAccess access) {
+        if (callSiteProfilesToInline != null) {
+            determineConcreteMethodsForProfiledInvokes((FeatureImpl.DuringSetupAccessImpl) access);
+        }
 
         try {
             RuntimeReflection.register(InvokeProfiler.class);
+            RuntimeReflection.register(CallSiteProfile.class);
 
             if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
                 RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
@@ -113,13 +112,7 @@ public class PGOInliningFeature implements InternalFeature  {
                 RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> InvokeProfiler.dumpProfileData());
 
                 RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("enableProfiling"));
-            } else if (!Boolean.getBoolean("disableVirtualInlineCachePhase")) {
-                Method foo = InvokeProfiler.class.getDeclaredMethod("foo");
-                Method bar = InvokeProfiler.class.getDeclaredMethod("bar");
-
-                RuntimeReflection.register(foo, bar);
             }
-
         } catch (NoSuchMethodException ex) {
             throw new RuntimeException("Failed to register method for reflection: " + ex.getMessage(), ex);
         }
@@ -130,11 +123,6 @@ public class PGOInliningFeature implements InternalFeature  {
         if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
             System.out.println("Injecting virtual invoke profiling phase");
             suites.getHighTier().prependPhase(new InjectInvokeToProfilerAtInvokesPhase());
-        }
-        // Mutually exclusive; can't do the virtual inline caching without profiling data or profiling enabled.
-        else if (!Boolean.getBoolean("disableVirtualInlineCachePhase") && Options.ProfileDataDumpFileName.getValue() != null) {
-            System.out.println("Injecting inline virtual invoke cache phase");
-            suites.getHighTier().prependPhase(new VirtualInvokeInlineCachePhase());
         }
     }
 }
