@@ -1977,6 +1977,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         LineNumberTable lineNumberTable = code.getLineNumberTable();
 
         if (Boolean.getBoolean("disableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty() || lineNumberTable == null) {
+//            System.out.println("No inlining for " + methodSignature(resolvedTarget) + " in " + methodSignature(method));
             originalGenInvokeVirtual(resolvedTarget, cpi);
             return;
         }
@@ -1992,6 +1993,9 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
             .orElse(null);
 
         if (matchingProfile == null) {
+//            if (resolvedTarget.toString().contains("Demo")) {
+//                System.out.println("No profile for " + methodSignature(resolvedTarget) + " in " + methodSignature(method) + " at " + source);
+//            }
             originalGenInvokeVirtual(resolvedTarget, cpi);
             return;
         }
@@ -2004,8 +2008,9 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
         boolean isRecursive = method.equals(m);
 
-        if (percentageTopTarget < 0.95 || isRecursive || !m.canBeInlined() || processedInvokes.contains(key) || m.canBeStaticallyBound()) {
+        if (percentageTopTarget < 0.95 || isRecursive || !m.canBeInlined() || processedInvokes.contains(key) || m.canBeStaticallyBound() || m.getCode() == null) {
             originalGenInvokeVirtual(resolvedTarget, cpi);
+//            System.out.println("Did not inline " + methodShortSignature(matchingProfile.getTopReceiverConcreteMethod()) + " for callsite " + methodSignature(resolvedTarget) + " in " + methodSignature(method) + " " + m.getCodeSize() + " " + percentageTopTarget);
             return;
         }
 
@@ -2027,6 +2032,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         lastInstr = concreteInvokeBegin;
 
         ValueNode[] argsCopy = Arrays.copyOf(args, args.length);
+        argsCopy[0] = genUnique(PiNode.create(args[0], StampFactory.objectNonNull(checkedType), concreteInvokeBegin));
 
         CurrentInvoke oldCurrentInvoke  = currentInvoke;
         currentInvoke = new CurrentInvoke(argsCopy, InvokeKind.Special, m.getSignature().getReturnType(m.getDeclaringClass()));
@@ -2045,8 +2051,8 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         FixedWithNextNode virtualInvokeNext = lastInstr;
         ValueNode virtualInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(resolvedTarget.getSignature().getReturnKind());
 
-//        BranchProbabilityData profileData = BranchProbabilityData.create(0.8, ProfileSource.PROFILED);
-        IfNode ifNode = (IfNode) genIfNode(instanceOfNode, concreteInvokeBegin, virtualInvokeBegin, null);
+        BranchProbabilityData profileData = BranchProbabilityData.create(0.99, ProfileSource.PROFILED);
+        IfNode ifNode = (IfNode) genIfNode(instanceOfNode, concreteInvokeBegin, virtualInvokeBegin, profileData);
 
         EndNode concreteInvokeEnd = graph.add(new EndNode());
         EndNode virtualInvokeEnd = graph.add(new EndNode());
@@ -2074,7 +2080,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         matchingProfile.targetMethod = methodSignature(m);
         matchingProfile.isDirectCall = true;
         matchingProfile.isInlineCachedIndirectCall = true;
-//        System.out.println("Inlined " + methodShortSignature(matchingProfile.getTopReceiverConcreteMethod()) + " for callsite " + methodSignature(resolvedTarget) + " in " + methodSignature(method) + " " + m.getCodeSize() + " " + percentageTopTarget);
+        System.out.println("Inlined " + methodShortSignature(matchingProfile.getTopReceiverConcreteMethod()) + " for callsite " + methodSignature(resolvedTarget) + " in " + methodSignature(method) + " " + m.getCodeSize() + " " + percentageTopTarget);
     }
 
     private boolean genDynamicInvokeHelper(ResolvedJavaMethod target, int cpi, int opcode) {
@@ -2136,7 +2142,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
     protected final ResolvedJavaMethod method;
     protected final Bytecode code;
     protected final BytecodeProvider bytecodeProvider;
-    protected final ProfilingInfo profilingInfo;
+    protected ProfilingInfo profilingInfo;
     protected final OptimisticOptimizations optimisticOpts;
     protected final ConstantPool constantPool;
     protected final IntrinsicContext intrinsicContext;
