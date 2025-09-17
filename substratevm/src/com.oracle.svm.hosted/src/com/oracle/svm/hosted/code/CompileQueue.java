@@ -903,7 +903,7 @@ public class CompileQueue {
         // Even though we care less about the limit for profiled invokes, we still need _a_ limit,
         // to prevent excessive inlining e.g. in cases of (indirect) recursion. We'll still be
         // generous with the limit, to not miss out on inlining opportunities.
-        if (callee.compilationInfo.getCompilationGraph().getNodeCount() > 1000) {
+        if (callee.compilationInfo.getCompilationGraph().getNodeCount() > 400) {
             return false;
         }
 
