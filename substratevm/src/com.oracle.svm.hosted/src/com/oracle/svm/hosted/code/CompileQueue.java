@@ -34,6 +34,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -318,11 +319,7 @@ public class CompileQueue {
         }
     }
 
-    private CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
-        return findMatchingCallSiteProfileForCallee(contextMethod, callee, invokeBci, true);
-    }
-
-    private static CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci, boolean isDirect) {
+    private static CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
         LineNumberTable lineNumberTable = contextMethod.getLineNumberTable();
         if (lineNumberTable == null || invokeBci == -1) {
             return null;
@@ -331,9 +328,10 @@ public class CompileQueue {
         int lineNumber = lineNumberTable.getLineNumber(invokeBci);
         String fileName = contextMethod.getDeclaringClass().getSourceFileName();
         String source = String.format("%s:%d", fileName, lineNumber);
+        String calleeMethod = callee.format("%H.%n(%p):%r");
 
         List<CallSiteProfile> matchingProfiles = PGOInliningFeature.getCallSiteProfilesToInline().stream()
-            .filter(profile -> profile.getTargetMethod().equals(callee.format("%H.%n(%p):%r")))
+            .filter(profile -> profile.getTargetMethod().equals(calleeMethod))
             .filter(profile -> source.equals(profile.getSource()))
             .limit(2)
             .toList();
@@ -343,8 +341,7 @@ public class CompileQueue {
         }
 
         CallSiteProfile matchingProfile = matchingProfiles.getFirst();
-
-        return isDirect == matchingProfile.isDirectCall() ? matchingProfile : null;
+        return matchingProfile.isDirectCall() ? matchingProfile : null;
     }
 
     protected class InlineTask implements Task {
@@ -899,7 +896,14 @@ public class CompileQueue {
             return true;
         }
 
-        if (!callee.canBeInlined() || method.compilationInfo.isTrivialInliningDisabled()) {
+        if (callee.compilationInfo.getCompilationGraph() == null || !callee.canBeInlined() || method.compilationInfo.isTrivialInliningDisabled()) {
+            return false;
+        }
+
+        // Even though we care less about the limit for profiled invokes, we still need _a_ limit,
+        // to prevent excessive inlining e.g. in cases of (indirect) recursion. We'll still be
+        // generous with the limit, to not miss out on inlining opportunities.
+        if (callee.compilationInfo.getCompilationGraph().getNodeCount() > 1000) {
             return false;
         }
 
@@ -909,7 +913,12 @@ public class CompileQueue {
             }
         }
 
-        return findMatchingCallSiteProfileForCallee(method, callee, invokeBci) != null;
+        CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
+
+        if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
+            System.out.println("Inlining previously indirect call to " + callee.format("%H.%n(%p)"));
+        }
+        return matchingProfile != null;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {

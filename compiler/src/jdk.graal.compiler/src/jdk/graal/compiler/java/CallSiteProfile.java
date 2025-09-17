@@ -17,6 +17,8 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
     boolean isDirectCall;
     public final Map<String, Method> receiverNameConcreteMethods = new HashMap<>();
 
+    public boolean isInlineCachedIndirectCall = false;
+
     boolean isMatched = false;
 
     public String getSource() {
@@ -51,13 +53,38 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
         return isMatched;
     }
 
-    protected List<Map.Entry<String, Long>> getTopReceiverClasses(Integer limit) {
-        return new ArrayList<>(receiverCounts.entrySet());
-    }
-
     public String getTargetClassName() {
         int lastDotIndex = this.getTargetMethod().lastIndexOf('.');
         return this.getTargetMethod().substring(0, lastDotIndex);
+    }
+
+    public Method getTopReceiverConcreteMethod() {
+        List<Method> topMethods = this.getTopReceiverConcreteMethods(1);
+        return topMethods.isEmpty() ? null : topMethods.getFirst();
+    }
+
+    public List<String> getTopReceiverClassNames(int n) {
+        return this.getReceiverCounts().entrySet().stream()
+            .sorted((e1, e2) -> Long.compare(e2.getValue(), e1.getValue()))
+            .limit(n)
+            .map(Map.Entry::getKey)
+            .collect(Collectors.toList());
+    }
+
+    public String getTopReceiverConcreteClassName() {
+        List<String> topTargets = this.getTopReceiverClassNames(1);
+        return topTargets.isEmpty() ? null : topTargets.getFirst();
+    }
+
+    public Long getTopReceiverCount() {
+        String topClassName = this.getTopReceiverConcreteClassName();
+        return topClassName == null ? 0L : this.receiverCounts.get(topClassName);
+    }
+
+    public List<Method> getTopReceiverConcreteMethods(int n) {
+        return this.getTopReceiverClassNames(n).stream()
+            .map(this.receiverNameConcreteMethods::get)
+            .collect(Collectors.toList());
     }
 
     public static List<CallSiteProfile> loadFromJSON(String json) {

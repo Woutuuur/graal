@@ -20,9 +20,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static jdk.graal.compiler.java.BytecodeParser.methodShortSignature;
 
@@ -30,8 +32,7 @@ import static jdk.graal.compiler.java.BytecodeParser.methodShortSignature;
 @Platforms(InternalPlatform.NATIVE_ONLY.class)
 public class PGOInliningFeature implements InternalFeature  {
 
-    private final static float INLINE_PROFILES_PERCENTAGE = 0.2f;
-    private static List<CallSiteProfile> callSiteProfiles = new ArrayList<>();
+    private final static float INLINE_PROFILES_PERCENTAGE = 0.4f;
     private static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
     public static Set<CallSiteProfile> getCallSiteProfilesToInline() {
@@ -39,9 +40,7 @@ public class PGOInliningFeature implements InternalFeature  {
     }
 
     public static boolean performPGOBasedInlining() {
-        return !Boolean.getBoolean("disableInlineCachePhase") &&
-            Options.ProfileDataDumpFileName.getValue() != null &&
-            callSiteProfilesToInline != null;
+        return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null;
     }
 
     static {
@@ -50,7 +49,7 @@ public class PGOInliningFeature implements InternalFeature  {
             Path jsonFilePath = Path.of(profileDataDumpFileName);
             try {
                 String json = Files.readString(jsonFilePath);
-                callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
+                List<CallSiteProfile> callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
 
                 int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
                 callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
@@ -89,7 +88,6 @@ public class PGOInliningFeature implements InternalFeature  {
                             return methodShortSignature(m).equals(shortSignatureTargetMethod);
                         })
                         .forEach(m -> {
-                            System.out.println("Concrete method: " + m + " for receiver: " + receiver + " for profile: " + profile.getTargetMethod());
                             profile.receiverNameConcreteMethods.put(subClass.getName(), m);
                         });
                 });
@@ -103,10 +101,12 @@ public class PGOInliningFeature implements InternalFeature  {
         }
 
         try {
-            RuntimeReflection.register(InvokeProfiler.class);
-            RuntimeReflection.register(CallSiteProfile.class);
+            if (callSiteProfilesToInline != null || !Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+                RuntimeReflection.register(CallSiteProfile.class);
+            }
 
             if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+                RuntimeReflection.register(InvokeProfiler.class);
                 RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
                 RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> InvokeProfiler.enableProfiling());
                 RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> InvokeProfiler.dumpProfileData());
