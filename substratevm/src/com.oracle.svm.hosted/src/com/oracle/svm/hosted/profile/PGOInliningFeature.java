@@ -52,7 +52,8 @@ public class PGOInliningFeature implements InternalFeature  {
                 List<CallSiteProfile> callSiteProfiles = CallSiteProfile.loadFromJSON(json).stream().sorted().toList();
 
                 int indexLimit = Math.round(INLINE_PROFILES_PERCENTAGE * callSiteProfiles.size());
-                callSiteProfilesToInline = new HashSet<>(callSiteProfiles.subList(0, indexLimit));
+                callSiteProfilesToInline = ConcurrentHashMap.newKeySet(indexLimit);
+                callSiteProfilesToInline.addAll(callSiteProfiles.subList(0, indexLimit));
 
                 BytecodeParser.callSiteProfilesToInline = callSiteProfilesToInline;
 
