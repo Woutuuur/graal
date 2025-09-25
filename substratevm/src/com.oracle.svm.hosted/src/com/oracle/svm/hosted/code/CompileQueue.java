@@ -884,7 +884,7 @@ public class CompileQueue {
     }
 
     private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
-        if (!PGOInliningFeature.performPGOBasedInlining()) {
+        if (!PGOInliningFeature.performPGOBasedInlining() || Boolean.getBoolean("originalInlining")) {
             return originalMakeInlineDecision(method, callee);
         }
 
@@ -915,9 +915,9 @@ public class CompileQueue {
 
         CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
 
-        if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
-            System.out.println("Inlining previously indirect call to " + callee.format("%H.%n(%p)"));
-        }
+//        if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
+//            System.out.println("Inlining previously indirect call to " + callee.format("%H.%n(%p)"));
+//        }
         return matchingProfile != null;
     }
 
