@@ -7,6 +7,7 @@ import com.oracle.svm.core.option.HostedOptionKey;
 import com.oracle.svm.hosted.FeatureImpl;
 import jdk.graal.compiler.java.BytecodeParser;
 import jdk.graal.compiler.java.CallSiteProfile;
+import jdk.graal.compiler.java.Foo;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionType;
 import jdk.graal.compiler.phases.tiers.Suites;
@@ -15,13 +16,9 @@ import org.graalvm.nativeimage.Platforms;
 import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.nativeimage.impl.InternalPlatform;
 
-import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -83,7 +80,7 @@ public class PGOInliningFeature implements InternalFeature  {
                         return;
                     }
 
-                    Arrays.stream(subClass.getDeclaredMethods())
+                    Arrays.stream(subClass.getMethods())
                         .filter(m -> {
                             String shortSignatureTargetMethod = profile.targetMethod.substring(profile.targetMethod.lastIndexOf('.') + 1);
                             return methodShortSignature(m).equals(shortSignatureTargetMethod);
@@ -97,6 +94,7 @@ public class PGOInliningFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
+        RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> System.out.println(Foo.counter + " " + Foo.counter2));
         if (callSiteProfilesToInline != null) {
             determineConcreteMethodsForProfiledInvokes((FeatureImpl.DuringSetupAccessImpl) access);
         }
@@ -104,6 +102,9 @@ public class PGOInliningFeature implements InternalFeature  {
         try {
             if (callSiteProfilesToInline != null || !Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
                 RuntimeReflection.register(CallSiteProfile.class);
+                RuntimeReflection.register(Foo.class);
+                RuntimeReflection.register(Foo.class.getDeclaredMethod("foo"));
+                RuntimeReflection.register(Foo.class.getDeclaredMethod("bar"));
             }
 
             if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
