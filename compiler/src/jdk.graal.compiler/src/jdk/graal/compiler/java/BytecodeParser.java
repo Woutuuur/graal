@@ -267,15 +267,13 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Formatter;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
-import jdk.vm.ci.meta.Constant;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.Equivalence;
-import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.word.LocationIdentity;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -1185,6 +1183,12 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
                 processBlock(block);
             }
         }
+
+//        long numIndirectCallsiteProfiles = callSiteProfilesToInline.stream().filter(CallSiteProfile::isIndirectCall).count();
+//
+//        System.out.println("[BytecodeParser] Number of ICs generated so far: " + numICsGenerated + " from PGO data");
+//        System.out.println("[BytecodeParser] for a total of " + numIndirectCalls + " indirect (virtual/interface) calls");
+//        System.out.println("[BytecodeParser] and " + numIndirectCallsiteProfiles + " indirect call site profiles\n");
     }
 
     private boolean computeKindVerification(FrameStateBuilder startFrameState) {
@@ -1977,19 +1981,21 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
     }
 
     private ResolvedJavaMethod resolveMethod(Method m) {
+        if (m == null) {
+            return null;
+        }
+
         return getMetaAccess().lookupJavaMethod(m);
     }
 
     // Returns true if the IC was generated and no further work is required for this invoke and false otherwise (i.e. it should be generated normally).
     protected boolean genInlineCachedInvoke(ResolvedJavaMethod resolvedTarget, InvokeKind invokeKind, ResolvedJavaType referencedType) {
-        String key = resolvedTarget.format("%H.%n(%p):%r");
-
         if (Boolean.getBoolean("disableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
             return false;
         }
 
         StackTraceElement ste = code.asStackTraceElement(bci());
-        if (ste == null || ste.getFileName() == null || ste.getLineNumber() <= 0) {
+        if (ste == null || ste.getFileName() == null || ste.getLineNumber() <= 0 || resolvedTarget.canBeStaticallyBound()) {
             return false;
         }
 
@@ -1998,96 +2004,112 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         CallSiteProfile matchingProfile = callSiteProfilesToInline.stream()
             .filter(p -> p.targetMethod.equals(methodSignature(resolvedTarget)))
             .filter(p -> p.source.equals(source))
-            .filter(p -> p.totalCount > 100_000)
-//            .filter(p -> p.getTopReceiverConcreteMethod() != null)
+//            .filter(p -> p.totalCount > 10_000)
             .findAny()
             .orElse(null);
 
-        if (matchingProfile == null) {
-            return false;
-        }
-        if (matchingProfile.getTopReceiverConcreteMethod() == null) {
+        if (matchingProfile == null || matchingProfile.getTopReceiverConcreteMethod() == null) {
             return false;
         }
 
-        float percentageTopTarget = (float) matchingProfile.getTopReceiverCount() / (float) matchingProfile.totalCount;
-        ResolvedJavaMethod m = resolveMethod(matchingProfile.getTopReceiverConcreteMethod());
-        boolean isRecursive = method.equals(m);
-
-        if (percentageTopTarget < 0.9 || isRecursive || !m.canBeInlined()) {
+        int numCases = matchingProfile.numPolymorphismCasesHeuristic();
+        if (numCases == 0) {
             return false;
         }
 
-        if (invokeKind == InvokeKind.Virtual) {
-            JavaConstant appendix = constantPool.lookupAppendix(stream.readCPI(), INVOKEVIRTUAL);
-            if (appendix != null) {
-                ValueNode appendixNode = ConstantNode.forConstant(appendix, getMetaAccess(), graph);
-                frameState.push(JavaKind.Object, appendixNode);
+        List<Method> topConcreteMethods = matchingProfile.getTopReceiverConcreteMethods(numCases);
+        List<ResolvedJavaMethod> resolvedTopMethods = new ArrayList<>();
+
+        if (topConcreteMethods.stream().anyMatch(Objects::isNull)) {
+            return false;
+        }
+
+        for (Method concreteMethod : topConcreteMethods) {
+            ResolvedJavaMethod m = resolveMethod(concreteMethod);
+            boolean isRecursive = method.equals(m);
+
+            if (m == null || isRecursive || !m.canBeInlined()) {
+                return false;
             }
+
+            resolvedTopMethods.add(m);
         }
 
         ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
         JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
 
-        FixedWithNextNode prev = lastInstr;
-
-        TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
-        LogicNode typeCheck = genUnique(createInstanceOf(checkedType, args[0], null));
-
-        BeginNode concreteInvokeBegin = graph.add(new BeginNode());
-        lastInstr = concreteInvokeBegin;
-
-        ValueNode[] argsCopy = Arrays.copyOf(args, args.length);
-
-        System.out.println(method.format("%n") + " (" + source + ") inlining call to " + m.format("%h.%n(%p)"));
-
-        CurrentInvoke oldCurrentInvoke = currentInvoke;
-        currentInvoke = new CurrentInvoke(argsCopy, InvokeKind.Special, m.getSignature().getReturnType(m.getDeclaringClass()));
-        parseAndInlineCallee(m, argsCopy, null);
-        // Alternatively, could use, use direct calls inliner later to inline the method
-//        appendInvoke(InvokeKind.Special, m, argsCopy, referencedType);
-        currentInvoke = oldCurrentInvoke;
-
-        RuntimeReflection.register(matchingProfile.getTopReceiverConcreteMethod());
-        FixedWithNextNode concreteInvokeNext = lastInstr;
-        ValueNode concreteInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(returnType);
-
-        BeginNode virtualInvokeBegin = graph.add(new BeginNode());
-        lastInstr = virtualInvokeBegin;
-
-        appendInvoke(invokeKind, resolvedTarget, args, referencedType);
-        FixedWithNextNode virtualInvokeNext = lastInstr;
-        ValueNode virtualInvokeReturn = returnType == JavaKind.Void ? null : frameState.pop(returnType);
-
-        BranchProbabilityData profileData = BranchProbabilityData.create(0.99, ProfileSource.PROFILED);
-        IfNode ifNode = (IfNode) genIfNode(typeCheck, concreteInvokeBegin, virtualInvokeBegin, profileData);
-
-        EndNode concreteInvokeEnd = graph.add(new EndNode());
-        EndNode virtualInvokeEnd = graph.add(new EndNode());
-        concreteInvokeNext.setNext(concreteInvokeEnd);
-        virtualInvokeNext.setNext(virtualInvokeEnd);
+        ValueNode receiver = args[0];
+        FixedWithNextNode currentLastInstr = lastInstr;
 
         MergeNode merge = graph.add(new MergeNode());
-        merge.addForwardEnd(concreteInvokeEnd);
-        merge.addForwardEnd(virtualInvokeEnd);
 
-        if (returnType != JavaKind.Void) {
-            ValueNode phi = add(new ValuePhiNode(
-                StampFactory.forKind(resolvedTarget.getSignature().getReturnKind()),
-                merge,
-                concreteInvokeReturn,
-                virtualInvokeReturn
-            ));
-            frameState.pushReturn(returnType, phi);
+        ValueNode[] phiValues = returnType == JavaKind.Void ? null : new ValueNode[numCases + 1];
+
+        FrameStateBuilder originalState = frameState.copy();
+
+        for (int i = 0; i < numCases; i++) {
+            ResolvedJavaMethod m = resolvedTopMethods.get(i);
+
+            TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
+            LogicNode typeCheck = graph.addOrUniqueWithInputs(createInstanceOf(checkedType, receiver, null));
+
+            BeginNode trueBegin = graph.add(new BeginNode());
+            BeginNode falseBegin = graph.add(new BeginNode());
+
+            double probability = 0.9;
+            BranchProbabilityData profileData = BranchProbabilityData.create(probability, ProfileSource.PROFILED);
+
+            IfNode ifNode = graph.add(new IfNode(typeCheck, trueBegin, falseBegin, profileData));
+            currentLastInstr.setNext(ifNode);
+
+            frameState = originalState.copy();
+            lastInstr = trueBegin;
+
+            ValueNode[] caseArgs = Arrays.copyOf(args, args.length);
+            CurrentInvoke oldCurrentInvoke = currentInvoke;
+            currentInvoke = new CurrentInvoke(caseArgs, InvokeKind.Special, resolvedTarget.getSignature().getReturnType(m.getDeclaringClass()));
+            appendInvoke(InvokeKind.Special, m, caseArgs, referencedType);
+            currentInvoke = oldCurrentInvoke;
+
+            if (returnType != JavaKind.Void) {
+                phiValues[i] = frameState.pop(returnType);
+            }
+
+            EndNode trueEnd = graph.add(new EndNode());
+            lastInstr.setNext(trueEnd);
+            merge.addForwardEnd(trueEnd);
+
+            currentLastInstr = falseBegin;
+            frameState = originalState.copy();
+
+            CallSiteProfile newProfile = new CallSiteProfile(source, methodSignature(m), true);
+            newProfile.isInlineCachedIndirectCall = true;
+            callSiteProfilesToInline.add(newProfile);
         }
 
-        prev.setNext(graph.addOrUniqueWithInputs(ifNode));
-        lastInstr = merge;
-        setStateAfter(merge);
+        frameState = originalState.copy();
+        lastInstr = currentLastInstr;
+        appendInvoke(invokeKind, resolvedTarget, args, referencedType);
 
-        CallSiteProfile newProfile = new CallSiteProfile(source, methodSignature(m), true);
-        newProfile.isInlineCachedIndirectCall = true;
-        callSiteProfilesToInline.add(newProfile);
+        if (returnType != JavaKind.Void) {
+            phiValues[numCases] = frameState.pop(returnType);
+        }
+
+        EndNode defaultEnd = graph.add(new EndNode());
+        lastInstr.setNext(defaultEnd);
+        merge.addForwardEnd(defaultEnd);
+
+        lastInstr = merge;
+        frameState = originalState.copy();
+
+        if (returnType != JavaKind.Void) {
+            ValuePhiNode phi = graph.addWithoutUnique(new ValuePhiNode(StampFactory.forKind(returnType), merge, phiValues));
+            frameState.push(returnType, phi);
+        }
+
+        merge.setStateAfter(createCurrentFrameState());
+
+        this.controlFlowSplit = true;
 
         return true;
     }

@@ -53,6 +53,35 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
         return isMatched;
     }
 
+    public int numPolymorphismCasesHeuristic() {
+        // WIP Heuristic:
+        // - If the top receiver count is more than 80% of total, consider it monomorphic
+        // - If the top 2 receiver counts together are more than 80% of total, consider it bimorphic
+        // - If the top 3 receiver counts together are more than 80% of total, consider it trimorphic
+        // - Otherwise, consider it megamorphic (4+), which we don't include for now, so return 0 and just fallback to the non IC fallback
+        // - Each case must make up at least 20% of the total to be considered, so once we find a case that doesn't meet that, we stop counting further cases
+
+        List<String> candidates = this.getTopReceiverClassNames(3);
+        long cumulativeCount = 0;
+
+        for (int i = 0; i < candidates.size(); i++) {
+            String className = candidates.get(i);
+            long count = this.receiverCounts.get(className);
+            cumulativeCount += count;
+            double percentage = (double) cumulativeCount / (double) this.totalCount;
+
+            if (percentage >= 0.8) {
+                return i + 1;
+            }
+
+            if ((double) count / (double) this.totalCount < 0.2) {
+                return 0;
+            }
+        }
+
+        return 0;
+    }
+
     public String getTargetClassName() {
         int lastDotIndex = this.getTargetMethod().lastIndexOf('.');
         return this.getTargetMethod().substring(0, lastDotIndex);
@@ -163,4 +192,8 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
         return Long.compare(o.totalCount, this.totalCount);
     }
 
+    @Override
+    public int hashCode() {
+        return (source + "->" + targetMethod).hashCode();
+    }
 }
