@@ -755,7 +755,6 @@ public class CompileQueue {
             }
             unpublishedTrivialMethods.clear();
         } while (inliningProgress);
-        System.out.println("Inlined " + numInlinedMethods + " methods during inlining");
     }
 
     class InliningPlugin implements InlineInvokePlugin {
@@ -851,7 +850,7 @@ public class CompileQueue {
                      * non-deterministic. This is why we are saving graphs to be published at the
                      * end of each round.
                      */
-                    unpublishedTrivialMethods.put(method, new UnpublishedTrivialMethods(CompilationGraph.encode(graph), false));
+                    unpublishedTrivialMethods.put(method, new UnpublishedTrivialMethods(CompilationGraph.encode(graph), checkNewlyTrivial(method, graph)));
                 }
             }
         } catch (Throwable ex) {
@@ -883,7 +882,7 @@ public class CompileQueue {
         return optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled();
     }
 
-    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
+    public boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
         if (!PGOInliningFeature.performPGOBasedInlining() || Boolean.getBoolean("originalInlining")) {
             return originalMakeInlineDecision(method, callee);
         }
@@ -896,7 +895,7 @@ public class CompileQueue {
             return true;
         }
 
-        if (callee.compilationInfo.getCompilationGraph() == null || !callee.canBeInlined() || method.compilationInfo.isTrivialInliningDisabled()) {
+        if (callee.compilationInfo.getCompilationGraph() == null || !callee.canBeInlined()) {
             return false;
         }
 
@@ -915,9 +914,6 @@ public class CompileQueue {
 
         CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
 
-//        if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
-//            System.out.println("Inlining previously indirect call to " + callee.format("%H.%n(%p)"));
-//        }
         return matchingProfile != null;
     }
 
