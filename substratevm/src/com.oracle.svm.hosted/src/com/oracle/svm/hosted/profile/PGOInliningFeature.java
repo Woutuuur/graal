@@ -54,7 +54,23 @@ public class PGOInliningFeature implements InternalFeature  {
 
                 BytecodeParser.callSiteProfilesToInline = callSiteProfilesToInline;
 
+                long totalCountRepresentedByIndirectCallSites = callSiteProfilesToInline.stream()
+                    .filter(CallSiteProfile::isIndirectCall)
+                    .mapToLong(CallSiteProfile::getTotalCount)
+                    .sum();
+                long totalCountRepresentedByDirectCallSites = callSiteProfilesToInline.stream()
+                    .filter(CallSiteProfile::isDirectCall)
+                    .mapToLong(CallSiteProfile::getTotalCount)
+                    .sum();
+                long indirectCallSites = callSiteProfilesToInline.stream().filter(CallSiteProfile::isIndirectCall).count();
+                long directCallSites = callSiteProfilesToInline.stream().filter(CallSiteProfile::isDirectCall).count();
+
                 System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
+                System.out.println("Using top " + indexLimit + " call sites for PGO based inlining");
+                System.out.println("Out of which " + indirectCallSites + " are indirect call sites and " + directCallSites + " are direct call sites");
+                System.out.println("Representing " + totalCountRepresentedByIndirectCallSites + " and " + totalCountRepresentedByDirectCallSites + " calls respectively");
+
+                System.out.println();
             } catch (Exception e) {
                 e.printStackTrace();
             }
