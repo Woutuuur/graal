@@ -30,7 +30,7 @@ public class PhasePGO {
     private boolean useCompilerPGO = false;
 
     // [TODO] Don't hardcode the file name
-    static private final File DUMP_FILE = new File("skippable_phases.txt");
+    private static final File DUMP_FILE = new File("skippable_phases.txt");
 
     public void init() {
         compilerProfiling = Boolean.getBoolean("profileCompiler");
@@ -152,15 +152,12 @@ public class PhasePGO {
         }
     }
 
-    private static PhasePGO instance;
+    private static final PhasePGO INSTANCE = new PhasePGO();
 
     private PhasePGO() {}
 
     public static PhasePGO getInstance() {
-        if (instance == null) {
-            instance = new PhasePGO();
-        }
-        return instance;
+        return INSTANCE;
     }
 
 }
