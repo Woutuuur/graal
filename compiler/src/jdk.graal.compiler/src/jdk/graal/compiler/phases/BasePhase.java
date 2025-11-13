@@ -551,12 +551,12 @@ public abstract class BasePhase<C> implements PhaseSizeContract {
         return false;
     }
 
-    private static final class GraphChangeListener extends NodeEventListener {
-        boolean changed;
+    public static final class GraphChangeListener extends NodeEventListener {
+        public boolean changed;
         private final StructuredGraph graph;
         private final Mark mark;
 
-        GraphChangeListener(StructuredGraph graphCopy) {
+        public GraphChangeListener(StructuredGraph graphCopy) {
             this.graph = graphCopy;
             this.mark = graph.getMark();
         }
