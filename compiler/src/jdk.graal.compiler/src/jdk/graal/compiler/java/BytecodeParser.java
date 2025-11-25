@@ -1990,7 +1990,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
     // Returns true if the IC was generated and no further work is required for this invoke and false otherwise (i.e. it should be generated normally).
     protected boolean genInlineCachedInvoke(ResolvedJavaMethod resolvedTarget, InvokeKind invokeKind, ResolvedJavaType referencedType) {
-        if (Boolean.getBoolean("disableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
+        if (!Boolean.getBoolean("enableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
             return false;
         }
 

@@ -560,6 +560,14 @@ public class NativeImageGenerator {
     protected void doRun(Map<Method, CEntryPointData> entryPoints, JavaMainSupport javaMainSupport, String imageName, NativeImageKind k, SubstitutionProcessor harnessSubstitutions) {
         List<HostedMethod> hostedEntryPoints = new ArrayList<>();
 
+        System.out.printf("enableInlineCachePhase = %s%n", Boolean.getBoolean("enableInlineCachePhase"));
+        System.out.printf("enableInvokeProfilingPhase = %s%n", Boolean.getBoolean("enableInvokeProfilingPhase"));
+        System.out.printf("enablePGODirectInvokeInlining = %s%n", Boolean.getBoolean("enablePGODirectInvokeInlining"));
+        System.out.printf("combinedInlining = %s%n", Boolean.getBoolean("combinedInlining"));
+        System.out.printf("ProfileDataDumpFileName = %s%n", PGOInliningFeature.Options.ProfileDataDumpFileName.getValue());
+        System.out.printf("useCompilerPGOData = %s%n", Boolean.getBoolean("useCompilerPGO"));
+        System.out.printf("profileCompiler = %s%n", Boolean.getBoolean("profileCompiler"));
+
         PhasePGO phasePGO = PhasePGO.getInstance();
         phasePGO.init();
 

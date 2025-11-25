@@ -37,12 +37,12 @@ public class PGOInliningFeature implements InternalFeature  {
     }
 
     public static boolean performPGOBasedInlining() {
-        return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null;
+        return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null && Boolean.getBoolean("enablePGODirectInvokeInlining");
     }
 
     static {
         String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
-        if (profileDataDumpFileName != null) {
+        if ((Boolean.getBoolean("enablePGODirectInvokeInlining") || Boolean.getBoolean("enableInlineCachePhase")) && profileDataDumpFileName != null) {
             Path jsonFilePath = Path.of(profileDataDumpFileName);
             try {
                 String json = Files.readString(jsonFilePath);
@@ -116,14 +116,14 @@ public class PGOInliningFeature implements InternalFeature  {
         }
 
         try {
-            if (callSiteProfilesToInline != null || !Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+            if (callSiteProfilesToInline != null || Boolean.getBoolean("enablePGODirectInvokeInlining")) {
                 RuntimeReflection.register(CallSiteProfile.class);
                 RuntimeReflection.register(Foo.class);
                 RuntimeReflection.register(Foo.class.getDeclaredMethod("foo"));
                 RuntimeReflection.register(Foo.class.getDeclaredMethod("bar"));
             }
 
-            if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+            if (Boolean.getBoolean("enableInvokeProfilingPhase")) {
                 RuntimeReflection.register(InvokeProfiler.class);
                 RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
                 RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> InvokeProfiler.enableProfiling());
@@ -138,8 +138,8 @@ public class PGOInliningFeature implements InternalFeature  {
 
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
-        if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
-            System.out.println("Injecting virtual invoke profiling phase");
+        if (Boolean.getBoolean("enableInvokeProfilingPhase")) {
+            System.out.println("Injecting invoke profiling phase");
             suites.getHighTier().prependPhase(new InjectInvokeToProfilerAtInvokesPhase());
         }
     }
