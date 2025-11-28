@@ -53,6 +53,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
+import com.oracle.svm.hosted.profile.PGOInliningFeature;
 import jdk.graal.compiler.phases.PhasePGO;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Pair;
