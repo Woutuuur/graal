@@ -1,30 +1,42 @@
-# LICENSE UPL 1.0
-#
-# Copyright (c) 2021, 2022 Oracle and/or its affiliates. All rights reserved.
-#
+FROM mcr.microsoft.com/devcontainers/base:bookworm
 
-FROM container-registry.oracle.com/os/oraclelinux:7-slim
+SHELL ["/bin/bash", "-c"]
 
-RUN yum update -y oraclelinux-release-el7 \
-    && yum install -y oraclelinux-developer-release-el7 oracle-softwarecollection-release-el7 \
-    && yum-config-manager --enable ol7_developer \
-    && yum-config-manager --enable ol7_developer_EPEL \
-    && yum-config-manager --enable ol7_optional_latest \
-    && yum install -y bzip2-devel ed gcc gcc-c++ gcc-gfortran gzip file fontconfig less libcurl-devel make openssl openssl-devel readline-devel tar vi which xz-devel zlib-devel \
-    && yum install -y glibc-static libcxx libcxx-devel libstdc++-static zlib-static git \
-    && rm -rf /var/cache/yum
+RUN apt-get update && \
+    apt-get install -y git generate-ninja ninja-build python3 python3-venv python3-pip maven gdb curl
+RUN apt-get clean all
 
-ENV LANG=en_US.UTF-8 \
-    PYENV_ROOT=/data/.pyenv/ \
-    MX_PATH=/data/mx/ \
+RUN mkdir -p /data
+
+ENV MX_PATH=/data/mx \
     JAVA_HOME=/data/jdk \
-    PATH="/data/mx/:/data/.pyenv/shims/:/data/.pyenv/bin:$PATH"
+    PATH="/data/mx/:$PATH" 
 
-RUN git clone https://github.com/pyenv/pyenv.git ${PYENV_ROOT} \
-    && pyenv install 3.8.0 \
-    && pyenv global 3.8.0 \
-    && git clone https://github.com/graalvm/mx.git ${MX_PATH} \
-    && cd /data \
-    && mx --java-home= fetch-jdk --jdk-id labsjdk-ce-11 --to jdk-dl --alias ${JAVA_HOME}
+# Get the mx tool
+RUN git clone -b ${MX_BRANCH} --depth 1 https://github.com/graalvm/mx.git ${MX_PATH}
 
-CMD mx --version
+# mx needs to be able to write files to its own directory
+RUN chmod -R 777 /data/mx
+
+# Copy graal project files temporarily for setup
+# COPY . /tmp/graal
+COPY .mx_vcs_root /tmp/graal/.mx_vcs_root
+COPY common.json /tmp/graal/common.json
+COPY ci.jsonnet /tmp/graal/ci.jsonnet
+COPY .git /tmp/graal/.git
+
+# Fetch the JDK
+RUN ${MX_PATH}/mx -p /tmp/graal --java-home= fetch-jdk --jdk-id labsjdk-ce-latest --to /data/jdk-dl --alias ${JAVA_HOME}
+
+# Create some shorthands for mx commands
+RUN echo "alias aot='mx -p /workspace/graal/substratevm native-image'" >> /etc/bash.bashrc && \
+    echo "alias vm='mx -p /workspace/graal/compiler vm'" >> /etc/bash.bashrc && \
+    echo "alias build-aot='mx -p /workspace/graal/substratevm build'" >> /etc/bash.bashrc && \
+    echo "alias build-jvm='mx -p /workspace/graal/compiler build'" >> /etc/bash.bashrc
+
+
+# Cleanup
+RUN rm -rf /tmp/*
+
+ENV BASH_ENV="/usr/local/sdkman/bin/sdkman-init.sh"
+ENTRYPOINT ["/bin/bash", "-c"]

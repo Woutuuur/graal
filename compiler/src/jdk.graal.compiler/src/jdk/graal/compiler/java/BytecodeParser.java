@@ -259,6 +259,7 @@ import static jdk.vm.ci.runtime.JVMCICompiler.INVOCATION_ENTRY_BCI;
 import static org.graalvm.nativeimage.ImageInfo.inImageBuildtimeCode;
 import static org.graalvm.nativeimage.ImageInfo.inImageRuntimeCode;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -266,7 +267,10 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.Formatter;
 import java.util.List;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.Equivalence;
@@ -1179,6 +1183,12 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
                 processBlock(block);
             }
         }
+
+//        long numIndirectCallsiteProfiles = callSiteProfilesToInline.stream().filter(CallSiteProfile::isIndirectCall).count();
+//
+//        System.out.println("[BytecodeParser] Number of ICs generated so far: " + numICsGenerated + " from PGO data");
+//        System.out.println("[BytecodeParser] for a total of " + numIndirectCalls + " indirect (virtual/interface) calls");
+//        System.out.println("[BytecodeParser] and " + numIndirectCallsiteProfiles + " indirect call site profiles\n");
     }
 
     private boolean computeKindVerification(FrameStateBuilder startFrameState) {
@@ -1896,11 +1906,15 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
     }
 
     protected void genInvokeInterface(JavaType referencedType, JavaMethod target) {
-        if (callTargetIsResolved(target) && (referencedType == null || referencedType instanceof ResolvedJavaType)) {
+        if (!callTargetIsResolved(target) || !(referencedType == null || referencedType instanceof ResolvedJavaType)) {
+            handleUnresolvedInvoke(target, InvokeKind.Interface);
+            return;
+        }
+
+        if (!genInlineCachedInvoke((ResolvedJavaMethod) target, InvokeKind.Interface, (ResolvedJavaType) referencedType)) {
+            // Fallback to original
             ValueNode[] args = frameState.popArguments(target.getSignature().getParameterCount(true));
             appendInvoke(InvokeKind.Interface, (ResolvedJavaMethod) target, args, (ResolvedJavaType) referencedType);
-        } else {
-            handleUnresolvedInvoke(target, InvokeKind.Interface);
         }
     }
 
@@ -1917,28 +1931,187 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
     protected void genInvokeVirtual(int cpi, int opcode) {
         JavaMethod target = lookupMethod(cpi, opcode);
-        if (callTargetIsResolved(target)) {
-            genInvokeVirtual((ResolvedJavaMethod) target);
-        } else {
+
+        if (!callTargetIsResolved(target)) {
             handleUnresolvedInvoke(target, InvokeKind.Virtual);
+            return;
+        }
+
+        if (!genInlineCachedInvoke((ResolvedJavaMethod) target, InvokeKind.Virtual, null)) {
+            // Fallback to original
+            originalGenInvokeVirtual((ResolvedJavaMethod) target, cpi);
         }
     }
 
-    protected void genInvokeVirtual(ResolvedJavaMethod resolvedTarget) {
-        int cpi = stream.readCPI();
+    public static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
+    private static String methodReturnType(Method m) {
+        return m.getReturnType().getTypeName().substring(m.getReturnType().getTypeName().lastIndexOf(".") + 1);
+    }
+
+    private static String methodParameters(Method m) {
+        return "(" + Arrays.stream(m.getParameterTypes()).map(c -> c.getTypeName().substring(c.getTypeName().lastIndexOf(".") + 1)).collect(Collectors.joining(", ")) + ")";
+    }
+
+    public static String methodShortSignature(Method m) {
+        return m.getName() + methodParameters(m) + ":" + methodReturnType(m);
+    }
+
+    public static String methodSignature(Method m) {
+        return m.getDeclaringClass().getName() + "." + m.getName() + methodParameters(m) + ":" + methodReturnType(m);
+    }
+
+    public static String methodSignature(ResolvedJavaMethod m) {
+        return m.format("%H.%n(%p):%r");
+    }
+
+    protected void originalGenInvokeVirtual(ResolvedJavaMethod resolvedTarget, int cpi) {
         /*
          * Special handling for runtimes that rewrite an invocation of MethodHandle.invoke(...) or
          * MethodHandle.invokeExact(...) to a static adapter. HotSpot does this - see
          * https://wiki.openjdk.java.net/display/HotSpot/Method+handles+and+invokedynamic
          */
-
         if (genDynamicInvokeHelper(resolvedTarget, cpi, INVOKEVIRTUAL)) {
             return;
         }
 
+        // TODO: Never reached?
         ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
         appendInvoke(InvokeKind.Virtual, resolvedTarget, args, null);
+    }
+
+    private ResolvedJavaMethod resolveMethod(Method m) {
+        if (m == null) {
+            return null;
+        }
+
+        return getMetaAccess().lookupJavaMethod(m);
+    }
+
+    // Returns true if the IC was generated and no further work is required for this invoke and false otherwise (i.e. it should be generated normally).
+    protected boolean genInlineCachedInvoke(ResolvedJavaMethod resolvedTarget, InvokeKind invokeKind, ResolvedJavaType referencedType) {
+        if (Boolean.getBoolean("disableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
+            return false;
+        }
+
+        StackTraceElement ste = code.asStackTraceElement(bci());
+        if (ste == null || ste.getFileName() == null || ste.getLineNumber() <= 0 || resolvedTarget.canBeStaticallyBound()) {
+            return false;
+        }
+
+        String source = ste.getFileName() + ":" + ste.getLineNumber();
+
+        CallSiteProfile matchingProfile = callSiteProfilesToInline.stream()
+            .filter(p -> p.targetMethod.equals(methodSignature(resolvedTarget)))
+            .filter(p -> p.source.equals(source))
+//            .filter(p -> p.totalCount > 10_000)
+            .findAny()
+            .orElse(null);
+
+        if (matchingProfile == null || matchingProfile.getTopReceiverConcreteMethod() == null) {
+            return false;
+        }
+
+        int numCases = matchingProfile.numPolymorphismCasesHeuristic();
+        if (numCases == 0) {
+            return false;
+        }
+
+        List<Method> topConcreteMethods = matchingProfile.getTopReceiverConcreteMethods(numCases);
+        List<ResolvedJavaMethod> resolvedTopMethods = new ArrayList<>();
+
+        if (topConcreteMethods.stream().anyMatch(Objects::isNull)) {
+            return false;
+        }
+
+        for (Method concreteMethod : topConcreteMethods) {
+            ResolvedJavaMethod m = resolveMethod(concreteMethod);
+            boolean isRecursive = method.equals(m);
+
+            if (m == null || isRecursive || !m.canBeInlined()) {
+                return false;
+            }
+
+            resolvedTopMethods.add(m);
+        }
+
+        ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
+        JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
+
+        ValueNode receiver = args[0];
+        FixedWithNextNode currentLastInstr = lastInstr;
+
+        MergeNode merge = graph.add(new MergeNode());
+
+        ValueNode[] phiValues = returnType == JavaKind.Void ? null : new ValueNode[numCases + 1];
+
+        FrameStateBuilder originalState = frameState.copy();
+
+        for (int i = 0; i < numCases; i++) {
+            ResolvedJavaMethod m = resolvedTopMethods.get(i);
+
+            TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
+            LogicNode typeCheck = graph.addOrUniqueWithInputs(createInstanceOf(checkedType, receiver, null));
+
+            BeginNode trueBegin = graph.add(new BeginNode());
+            BeginNode falseBegin = graph.add(new BeginNode());
+
+            double probability = 0.9;
+            BranchProbabilityData profileData = BranchProbabilityData.create(probability, ProfileSource.PROFILED);
+
+            IfNode ifNode = graph.add(new IfNode(typeCheck, trueBegin, falseBegin, profileData));
+            currentLastInstr.setNext(ifNode);
+
+            frameState = originalState.copy();
+            lastInstr = trueBegin;
+
+            ValueNode[] caseArgs = Arrays.copyOf(args, args.length);
+            CurrentInvoke oldCurrentInvoke = currentInvoke;
+            currentInvoke = new CurrentInvoke(caseArgs, InvokeKind.Special, resolvedTarget.getSignature().getReturnType(m.getDeclaringClass()));
+            appendInvoke(InvokeKind.Special, m, caseArgs, referencedType);
+            currentInvoke = oldCurrentInvoke;
+
+            if (returnType != JavaKind.Void) {
+                phiValues[i] = frameState.pop(returnType);
+            }
+
+            EndNode trueEnd = graph.add(new EndNode());
+            lastInstr.setNext(trueEnd);
+            merge.addForwardEnd(trueEnd);
+
+            currentLastInstr = falseBegin;
+            frameState = originalState.copy();
+
+            CallSiteProfile newProfile = new CallSiteProfile(source, methodSignature(m), true);
+            newProfile.isInlineCachedIndirectCall = true;
+            callSiteProfilesToInline.add(newProfile);
+        }
+
+        frameState = originalState.copy();
+        lastInstr = currentLastInstr;
+        appendInvoke(invokeKind, resolvedTarget, args, referencedType);
+
+        if (returnType != JavaKind.Void) {
+            phiValues[numCases] = frameState.pop(returnType);
+        }
+
+        EndNode defaultEnd = graph.add(new EndNode());
+        lastInstr.setNext(defaultEnd);
+        merge.addForwardEnd(defaultEnd);
+
+        lastInstr = merge;
+        frameState = originalState.copy();
+
+        if (returnType != JavaKind.Void) {
+            ValuePhiNode phi = graph.addWithoutUnique(new ValuePhiNode(StampFactory.forKind(returnType), merge, phiValues));
+            frameState.push(returnType, phi);
+        }
+
+        merge.setStateAfter(createCurrentFrameState());
+
+        this.controlFlowSplit = true;
+
+        return true;
     }
 
     private boolean genDynamicInvokeHelper(ResolvedJavaMethod target, int cpi, int opcode) {
@@ -1951,7 +2124,6 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
             appendixNode = ConstantNode.forConstant(appendix, getMetaAccess(), graph);
 
             frameState.push(JavaKind.Object, appendixNode);
-
         }
 
         boolean hasReceiver = opcode != INVOKEDYNAMIC && !target.isStatic();
@@ -2001,7 +2173,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
     protected final ResolvedJavaMethod method;
     protected final Bytecode code;
     protected final BytecodeProvider bytecodeProvider;
-    protected final ProfilingInfo profilingInfo;
+    protected ProfilingInfo profilingInfo;
     protected final OptimisticOptimizations optimisticOpts;
     protected final ConstantPool constantPool;
     protected final IntrinsicContext intrinsicContext;
@@ -2123,6 +2295,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
                 inlineInfo = tryInline(args, targetMethod);
                 if (inlineInfo == SUCCESSFULLY_INLINED) {
+//                    System.out.println("Succesfully inlined " + methodSignature(targetMethod) + " into " + methodSignature(method));
                     return null;
                 }
             }
@@ -2192,8 +2365,8 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
      * This is a check not performed by the verifier and so must be performed at runtime.
      *
      * @param declaringClass interface declaring the callee
-     * @param args arguments to an {@link Bytecodes#INVOKEINTERFACE} call to a private method
-     *            declared in a interface
+     * @param args           arguments to an {@link Bytecodes#INVOKEINTERFACE} call to a private method
+     *                       declared in a interface
      */
     private void emitCheckForDeclaringClassChange(ResolvedJavaType declaringClass, ValueNode[] args) {
         args[0] = emitIncompatibleClassChangeCheck(args[0], declaringClass);
@@ -2207,7 +2380,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
      * This is a check not performed by the verifier and so must be performed at runtime.
      *
      * @param args arguments to an {@link Bytecodes#INVOKESPECIAL} implementing a direct call to a
-     *            method in a super class
+     *             method in a super class
      */
     protected void emitCheckForInvokeSuperSpecial(ValueNode[] args) {
         ResolvedJavaType callingClass = method.getDeclaringClass();
@@ -2246,7 +2419,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
      * A partial intrinsic exits by (effectively) calling the intrinsified method. This call must
      * use exactly the arguments to the call being intrinsified.
      *
-     * @param originalArgs arguments of original call to intrinsified method
+     * @param originalArgs  arguments of original call to intrinsified method
      * @param recursiveArgs arguments of recursive call to intrinsified method
      */
     private static boolean checkPartialIntrinsicExit(ValueNode[] originalArgs, ValueNode[] recursiveArgs) {
@@ -2768,7 +2941,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
      * where {@code n} is the current inlining depth.
      *
      * @param format a format string
-     * @param args arguments to the format string
+     * @param args   arguments to the format string
      */
 
     protected void traceWithContext(String format, Object... args) {
@@ -4720,6 +4893,11 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         maybeEagerlyResolve(cpi, opcode);
         JavaMethod result = lookupMethodInPool(cpi, opcode);
         assert !graphBuilderConfig.unresolvedIsError() || result instanceof ResolvedJavaMethod : result.format("%H.%n(%P)%R");
+
+//        if (result.format("%H.%n(%p):%r").contains("avrora")) {
+//            System.out.println("lookupMethod " + result.format("%H.%n(%p):%r") + " at " + methodSignature(method) + " bci " + bci());
+//        }
+
         return result;
     }
 
@@ -4759,8 +4937,8 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
      * been handled. The caller can choose to ignore the exception in this case.
      *
      * @param allowBootstrapMethodInvocation specifies if lookup can resolve a constant that may
-     *            require execution of a bootstrap method. If {@code false} and the constant is not
-     *            resolved, {@code null} is returned.
+     *                                       require execution of a bootstrap method. If {@code false} and the constant is not
+     *                                       resolved, {@code null} is returned.
      */
     protected Object lookupConstant(int cpi, int opcode, boolean allowBootstrapMethodInvocation) {
         maybeEagerlyResolve(cpi, opcode);
