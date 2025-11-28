@@ -883,12 +883,18 @@ public class CompileQueue {
     }
 
     public boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
-        if (!PGOInliningFeature.performPGOBasedInlining() || Boolean.getBoolean("originalInlining")) {
-            return originalMakeInlineDecision(method, callee);
+        // Special case, we need to inline the direct invokes inserted in IC branches
+        if (Boolean.getBoolean("enableInlineCachePhase")) {
+            CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
+
+            if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
+//                System.out.println("Inlining IC direct call from " + method.format("%H.%n(%p)") + " to " + callee.format("%H.%n(%p)"));
+                return true;
+            }
         }
 
-        if (callee.compilationInfo.getCompilationGraph() == null) {
-            return false;
+        if (!PGOInliningFeature.performPGOBasedInlining()) {
+            return originalMakeInlineDecision(method, callee);
         }
 
         if (callee.shouldBeInlined()) {
@@ -914,7 +920,7 @@ public class CompileQueue {
 
         CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
 
-        return matchingProfile != null;
+        return matchingProfile != null && !matchingProfile.isInlineCachedIndirectCall;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
