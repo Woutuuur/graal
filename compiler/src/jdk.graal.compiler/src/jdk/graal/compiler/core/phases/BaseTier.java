@@ -70,7 +70,7 @@ public class BaseTier<C> extends PhaseSuite<C> {
                 continue;
             }
 
-            if (phasePGO.shouldProfilePhase(phase) && isMidOrHighTier) {
+            if (isMidOrHighTier && phasePGO.shouldProfilePhase(phase)) {
                 GraphChangeListener listener = new GraphChangeListener(graph);
                 try (Graph.NodeEventScope s = graph.trackNodeEvents(listener)) {
                     try (DebugContext.Scope s2 = graph.getDebug().sandbox("GraphChangeListener", null)) {
