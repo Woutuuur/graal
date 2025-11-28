@@ -5,13 +5,14 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 public class CallSiteProfile implements Comparable<CallSiteProfile> {
     public long totalCount;
-    public HashMap<String, Long> receiverCounts;
+    public ConcurrentHashMap<String, Long> receiverCounts;
     public String source;
     public String targetMethod;
     boolean isDirectCall;
@@ -54,13 +55,6 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
     }
 
     public int numPolymorphismCasesHeuristic() {
-        // WIP Heuristic:
-        // - If the top receiver count is more than 80% of total, consider it monomorphic
-        // - If the top 2 receiver counts together are more than 80% of total, consider it bimorphic
-        // - If the top 3 receiver counts together are more than 80% of total, consider it trimorphic
-        // - Otherwise, consider it megamorphic (4+), which we don't include for now, so return 0 and just fallback to the non IC fallback
-        // - Each case must make up at least 20% of the total to be considered, so once we find a case that doesn't meet that, we stop counting further cases
-
         List<String> candidates = this.getTopReceiverClassNames(3);
         long cumulativeCount = 0;
 
@@ -159,6 +153,7 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
                 callSiteProfile.source,
                 callSiteProfile.isDirectCall ? "true" : "false",
                 callSiteProfile.receiverCounts.entrySet().stream()
+                    .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
                     .map(entry -> String.format("      \"%s\": %d", entry.getKey(), entry.getValue()))
                     .collect(Collectors.joining(",\n"))
             ))
@@ -168,14 +163,14 @@ public class CallSiteProfile implements Comparable<CallSiteProfile> {
 
     public CallSiteProfile(long totalCount, Map<String, Long> receiverCounts, String source, String targetMethod, boolean isDirectCall) {
         this.totalCount = totalCount;
-        this.receiverCounts = new HashMap<>(receiverCounts);
+        this.receiverCounts = new ConcurrentHashMap<>(receiverCounts);
         this.source = source;
         this.targetMethod = targetMethod;
         this.isDirectCall = isDirectCall;
     }
 
     public CallSiteProfile(String source, String targetMethod, boolean isDirectCall) {
-        this.receiverCounts = new HashMap<>(100);
+        this.receiverCounts = new ConcurrentHashMap<>(100);
         this.source = source;
         this.targetMethod = targetMethod;
         this.isDirectCall = isDirectCall;
