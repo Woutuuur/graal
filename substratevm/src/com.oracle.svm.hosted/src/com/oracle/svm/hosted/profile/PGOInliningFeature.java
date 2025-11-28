@@ -45,9 +45,6 @@ public class PGOInliningFeature implements InternalFeature  {
         return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null && Boolean.getBoolean("enablePGODirectInvokeInlining");
     }
 
-    public static AtomicInteger numICs = new AtomicInteger(0);
-    public static AtomicInteger cancelledDueToCodeSize = new AtomicInteger(0);
-
     static {
         String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
         if ((Boolean.getBoolean("enablePGODirectInvokeInlining") || Boolean.getBoolean("enableInlineCachePhase")) && profileDataDumpFileName != null) {
@@ -61,8 +58,6 @@ public class PGOInliningFeature implements InternalFeature  {
                 callSiteProfilesToInline.addAll(callSiteProfiles.subList(0, indexLimit));
 
                 BytecodeParser.callSiteProfilesToInline = callSiteProfilesToInline;
-                BytecodeParser.cancelledDueToCodeSize = cancelledDueToCodeSize;
-                BytecodeParser.numICs = numICs;
 
                 long totalCountRepresentedByIndirectCallSites = callSiteProfilesToInline.stream()
                     .filter(CallSiteProfile::isIndirectCall)
