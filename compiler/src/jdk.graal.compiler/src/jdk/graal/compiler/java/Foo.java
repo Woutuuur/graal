@@ -1,16 +1,18 @@
 package jdk.graal.compiler.java;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class Foo {
 
-    public static int counter = 0;
-    public static int counter2 = 0;
+    public static AtomicLong counter = new AtomicLong(0);
+    public static AtomicLong counter2 = new AtomicLong(0);
 
     public static void foo() {
-        counter++;
+        counter.incrementAndGet();
     }
 
     public static void bar() {
-        counter2++;
+        counter2.incrementAndGet();
     }
 
 }
