@@ -1,6 +1,7 @@
 package jdk.graal.compiler.phases;
 
 import jdk.graal.compiler.debug.TTY;
+import jdk.graal.compiler.graph.Node;
 import jdk.graal.compiler.loop.phases.LoopFullUnrollPhase;
 import jdk.graal.compiler.loop.phases.LoopPeelingPhase;
 import jdk.graal.compiler.loop.phases.LoopUnswitchingPhase;
@@ -72,9 +73,9 @@ public class PhasePGO {
 
         try {
             Files.readAllLines(skippablePhasesPath)
-                    .stream()
-                    .map(Integer::valueOf)
-                    .forEach(skippablePhaseFingerprints::add);
+                .stream()
+                .map(Integer::valueOf)
+                .forEach(skippablePhaseFingerprints::add);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -122,17 +123,22 @@ public class PhasePGO {
         h = 31 * h + graph.method().format("%H.%n(%p):%r").hashCode();
         h = 31 * h + phase.contractorName().hashCode();
 
-        // [TODO] Check if stage flags are necessary
         GraphState gs = graph.getGraphState();
-        for (GraphState.StageFlag f : gs.getStageFlags()) {
-            h = 31 * h + f.ordinal();
+        h = gs.getStageFlags().stream()
+            .map(Enum::ordinal)
+            .reduce(h, (prev, flag) -> 31 * prev + flag);
+
+        int nodesHash = 0;
+        for (Node node : graph.getNodes()) {
+            int nodeHash = System.identityHashCode(node.getNodeClass());
+
+            nodeHash = nodeHash * 31 + node.getUsageCount();
+            nodeHash = nodeHash * 31 + node.inputs().count();
+
+            nodesHash += nodeHash;
         }
 
-        for (String c : graph.getNodes().stream().map(n -> n.getNodeClass().shortName()).toList()) {
-            h = 31 * h + c.hashCode();
-        }
-
-        return h;
+        return 31 * h + nodesHash;
     }
 
     public boolean shouldDumpPGOData() {
