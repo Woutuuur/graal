@@ -269,11 +269,14 @@ import java.util.Formatter;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import jdk.graal.compiler.nodes.extended.GetClassNode;
 import org.graalvm.collections.EconomicMap;
 import org.graalvm.collections.Equivalence;
+import org.graalvm.nativeimage.hosted.RuntimeReflection;
 import org.graalvm.word.LocationIdentity;
 
 import jdk.graal.compiler.api.replacements.Fold;
@@ -1988,9 +1991,12 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         return getMetaAccess().lookupJavaMethod(m);
     }
 
+    public static AtomicInteger numICs = null;
+    public static AtomicInteger cancelledDueToCodeSize = null;
+
     // Returns true if the IC was generated and no further work is required for this invoke and false otherwise (i.e. it should be generated normally).
     protected boolean genInlineCachedInvoke(ResolvedJavaMethod resolvedTarget, InvokeKind invokeKind, ResolvedJavaType referencedType) {
-        if (Boolean.getBoolean("disableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
+        if (!Boolean.getBoolean("enableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
             return false;
         }
 
@@ -2004,7 +2010,7 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         CallSiteProfile matchingProfile = callSiteProfilesToInline.stream()
             .filter(p -> p.targetMethod.equals(methodSignature(resolvedTarget)))
             .filter(p -> p.source.equals(source))
-//            .filter(p -> p.totalCount > 10_000)
+            .filter(CallSiteProfile::isIndirectCall)
             .findAny()
             .orElse(null);
 
@@ -2035,81 +2041,122 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
             resolvedTopMethods.add(m);
         }
 
+        numICs.getAndIncrement();
+
         ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
         JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
 
         ValueNode receiver = args[0];
-        FixedWithNextNode currentLastInstr = lastInstr;
 
-        MergeNode merge = graph.add(new MergeNode());
+        MergeNode postICMerge = graph.add(new MergeNode()); // Merges all paths
+        MergeNode fallbackMerge = graph.add(new MergeNode()); // Merges Null Path and Cache Miss Path
+
+        fallbackMerge.setStateAfter(createCurrentFrameState());
 
         ValueNode[] phiValues = returnType == JavaKind.Void ? null : new ValueNode[numCases + 1];
 
         FrameStateBuilder originalState = frameState.copy();
 
+        LogicNode isNull = graph.addOrUnique(IsNullNode.create(receiver));
+        BeginNode notNullBegin = graph.add(new BeginNode());
+        BeginNode nullBegin = graph.add(new BeginNode());
+
+        IfNode nullCheck = graph.add(new IfNode(
+            isNull,
+            nullBegin, notNullBegin,
+            BranchProbabilityData.create(0.001, ProfileSource.UNKNOWN)
+        ));
+        lastInstr.setNext(nullCheck);
+
+        EndNode nullEnd = graph.add(new EndNode());
+        nullBegin.setNext(nullEnd);
+        fallbackMerge.addForwardEnd(nullEnd);
+
+        Stamp nonNullStamp = receiver.stamp(NodeView.DEFAULT).join(StampFactory.objectNonNull());
+        ValueNode notNullReceiver = graph.addOrUnique(new PiNode(receiver, nonNullStamp, notNullBegin));
+        ValueNode classNode = graph.addOrUnique(new GetClassNode(StampFactory.forKind(JavaKind.Object), notNullReceiver));
+
+        lastInstr = notNullBegin;
+
         for (int i = 0; i < numCases; i++) {
             ResolvedJavaMethod m = resolvedTopMethods.get(i);
+            RuntimeReflection.register(topConcreteMethods.get(i).getDeclaringClass());
+            RuntimeReflection.register(topConcreteMethods.get(i));
 
-            TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
-            LogicNode typeCheck = graph.addOrUniqueWithInputs(createInstanceOf(checkedType, receiver, null));
+            ValueNode expectedClass = ConstantNode.forConstant(
+                StampFactory.forKind(JavaKind.Object),
+                getConstantReflection().asJavaClass(m.getDeclaringClass()),
+                getMetaAccess(),
+                graph
+            );
 
-            BeginNode trueBegin = graph.add(new BeginNode());
-            BeginNode falseBegin = graph.add(new BeginNode());
+            LogicNode typeCheck = graph.addOrUnique(ObjectEqualsNode.create(classNode, expectedClass, getConstantReflection(), NodeView.DEFAULT));
 
-            double probability = 0.9;
-            BranchProbabilityData profileData = BranchProbabilityData.create(probability, ProfileSource.PROFILED);
+            BeginNode cacheHitBegin = graph.add(new BeginNode());
+            BeginNode cacheMissBegin = graph.add(new BeginNode());
 
-            IfNode ifNode = graph.add(new IfNode(typeCheck, trueBegin, falseBegin, profileData));
-            currentLastInstr.setNext(ifNode);
+            BranchProbabilityData profileData = BranchProbabilityData.create(1.0 / numCases - 0.01, ProfileSource.PROFILED);
+
+            IfNode ifNode = graph.add(new IfNode(typeCheck, cacheHitBegin, cacheMissBegin, profileData));
+            lastInstr.setNext(ifNode);
 
             frameState = originalState.copy();
-            lastInstr = trueBegin;
+
+            TypeReference checkedType = TypeReference.createExactTrusted(m.getDeclaringClass());
+            Stamp exactStamp = StampFactory.object(checkedType, true);
+            ValueNode exactReceiver = graph.addOrUnique(new PiNode(notNullReceiver, exactStamp, cacheHitBegin));
 
             ValueNode[] caseArgs = Arrays.copyOf(args, args.length);
+            caseArgs[0] = exactReceiver;
+
             CurrentInvoke oldCurrentInvoke = currentInvoke;
             currentInvoke = new CurrentInvoke(caseArgs, InvokeKind.Special, resolvedTarget.getSignature().getReturnType(m.getDeclaringClass()));
-            appendInvoke(InvokeKind.Special, m, caseArgs, referencedType);
+            lastInstr = cacheHitBegin;
+            appendInvoke(InvokeKind.Special, m, caseArgs, m.getDeclaringClass());
             currentInvoke = oldCurrentInvoke;
 
             if (returnType != JavaKind.Void) {
                 phiValues[i] = frameState.pop(returnType);
             }
 
-            EndNode trueEnd = graph.add(new EndNode());
-            lastInstr.setNext(trueEnd);
-            merge.addForwardEnd(trueEnd);
+            EndNode cacheHitEnd = graph.add(new EndNode());
+            lastInstr.setNext(cacheHitEnd);
+            postICMerge.addForwardEnd(cacheHitEnd);
 
-            currentLastInstr = falseBegin;
             frameState = originalState.copy();
 
             CallSiteProfile newProfile = new CallSiteProfile(source, methodSignature(m), true);
             newProfile.isInlineCachedIndirectCall = true;
             callSiteProfilesToInline.add(newProfile);
+
+            lastInstr = cacheMissBegin;
         }
 
+        EndNode cacheMissEnd = graph.add(new EndNode());
+        lastInstr.setNext(cacheMissEnd);
+        fallbackMerge.addForwardEnd(cacheMissEnd);
+
+        lastInstr = fallbackMerge;
         frameState = originalState.copy();
-        lastInstr = currentLastInstr;
-        appendInvoke(invokeKind, resolvedTarget, args, referencedType);
+        appendInvoke(invokeKind, resolvedTarget, args, referencedType); // Cache miss/fallback, i.e. the original invoke
 
         if (returnType != JavaKind.Void) {
             phiValues[numCases] = frameState.pop(returnType);
         }
 
-        EndNode defaultEnd = graph.add(new EndNode());
-        lastInstr.setNext(defaultEnd);
-        merge.addForwardEnd(defaultEnd);
+        EndNode fallbackEnd = graph.add(new EndNode());
+        lastInstr.setNext(fallbackEnd);
+        postICMerge.addForwardEnd(fallbackEnd);
 
-        lastInstr = merge;
+        lastInstr = postICMerge;
         frameState = originalState.copy();
 
         if (returnType != JavaKind.Void) {
-            ValuePhiNode phi = graph.addWithoutUnique(new ValuePhiNode(StampFactory.forKind(returnType), merge, phiValues));
+            ValuePhiNode phi = graph.addWithoutUnique(new ValuePhiNode(StampFactory.forKind(returnType), postICMerge, phiValues));
             frameState.push(returnType, phi);
         }
 
-        merge.setStateAfter(createCurrentFrameState());
-
-        this.controlFlowSplit = true;
+        postICMerge.setStateAfter(createCurrentFrameState());
 
         return true;
     }

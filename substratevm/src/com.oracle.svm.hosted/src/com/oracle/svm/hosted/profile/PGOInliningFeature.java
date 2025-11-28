@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static jdk.graal.compiler.java.BytecodeParser.methodShortSignature;
 
@@ -33,16 +34,20 @@ public class PGOInliningFeature implements InternalFeature  {
     private static Set<CallSiteProfile> callSiteProfilesToInline = null;
 
     public static Set<CallSiteProfile> getCallSiteProfilesToInline() {
+        if (callSiteProfilesToInline == null) {
+            callSiteProfilesToInline = ConcurrentHashMap.newKeySet();
+        }
+
         return callSiteProfilesToInline;
     }
 
     public static boolean performPGOBasedInlining() {
-        return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null;
+        return Options.ProfileDataDumpFileName.getValue() != null && callSiteProfilesToInline != null && Boolean.getBoolean("enablePGODirectInvokeInlining");
     }
 
     static {
         String profileDataDumpFileName = PGOInliningFeature.Options.ProfileDataDumpFileName.getValue();
-        if (profileDataDumpFileName != null) {
+        if ((Boolean.getBoolean("enablePGODirectInvokeInlining") || Boolean.getBoolean("enableInlineCachePhase")) && profileDataDumpFileName != null) {
             Path jsonFilePath = Path.of(profileDataDumpFileName);
             try {
                 String json = Files.readString(jsonFilePath);
@@ -62,13 +67,18 @@ public class PGOInliningFeature implements InternalFeature  {
                     .filter(CallSiteProfile::isDirectCall)
                     .mapToLong(CallSiteProfile::getTotalCount)
                     .sum();
+                long totalCalls = callSiteProfilesToInline.stream()
+                    .mapToLong(CallSiteProfile::getTotalCount)
+                    .sum();
+                assert totalCalls == totalCountRepresentedByDirectCallSites + totalCountRepresentedByIndirectCallSites;
                 long indirectCallSites = callSiteProfilesToInline.stream().filter(CallSiteProfile::isIndirectCall).count();
                 long directCallSites = callSiteProfilesToInline.stream().filter(CallSiteProfile::isDirectCall).count();
 
                 System.out.println("Loaded " + callSiteProfiles.size() + " call sites profiles from file: " + jsonFilePath);
                 System.out.println("Using top " + indexLimit + " call sites for PGO based inlining");
-                System.out.println("Out of which " + indirectCallSites + " are indirect call sites and " + directCallSites + " are direct call sites");
-                System.out.println("Representing " + totalCountRepresentedByIndirectCallSites + " and " + totalCountRepresentedByDirectCallSites + " calls respectively");
+                System.out.println("Out of which " + indirectCallSites + " are indirect call sites and " + directCallSites + " are direct call sites (" + (double) indirectCallSites / (double) indexLimit * 100.0 + "% indirect)");
+                System.out.println("Representing " + totalCountRepresentedByIndirectCallSites + " and " + totalCountRepresentedByDirectCallSites + " calls respectively (" + (double) totalCountRepresentedByIndirectCallSites / (double) totalCalls * 100.0 + "% indirect)");
+                System.out.println("Total calls represented: " + totalCalls);
 
                 System.out.println();
             } catch (Exception e) {
@@ -96,7 +106,7 @@ public class PGOInliningFeature implements InternalFeature  {
                         return;
                     }
 
-                    Arrays.stream(subClass.getMethods())
+                    Arrays.stream(subClass.getDeclaredMethods())
                         .filter(m -> {
                             String shortSignatureTargetMethod = profile.targetMethod.substring(profile.targetMethod.lastIndexOf('.') + 1);
                             return methodShortSignature(m).equals(shortSignatureTargetMethod);
@@ -110,22 +120,22 @@ public class PGOInliningFeature implements InternalFeature  {
 
     @Override
     public void duringSetup(DuringSetupAccess access) {
-        RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> System.out.println(Foo.counter + " " + Foo.counter2));
+        RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> System.out.println(Foo.counter.get() + " " + Foo.counter2.get()));
         if (callSiteProfilesToInline != null) {
             determineConcreteMethodsForProfiledInvokes((FeatureImpl.DuringSetupAccessImpl) access);
         }
 
         try {
-            if (callSiteProfilesToInline != null || !Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+            if (callSiteProfilesToInline != null || Boolean.getBoolean("enablePGODirectInvokeInlining")) {
                 RuntimeReflection.register(CallSiteProfile.class);
                 RuntimeReflection.register(Foo.class);
                 RuntimeReflection.register(Foo.class.getDeclaredMethod("foo"));
                 RuntimeReflection.register(Foo.class.getDeclaredMethod("bar"));
             }
 
-            if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
+            if (Boolean.getBoolean("enableInvokeProfilingPhase")) {
                 RuntimeReflection.register(InvokeProfiler.class);
-                RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class));
+                RuntimeReflection.register(InvokeProfiler.class.getDeclaredMethod("profileInvoke", boolean.class, String.class, String.class, Object.class, int.class));
                 RuntimeSupport.getRuntimeSupport().addStartupHook(isFirstIsolate -> InvokeProfiler.enableProfiling());
                 RuntimeSupport.getRuntimeSupport().addShutdownHook(isFirstIsolate -> InvokeProfiler.dumpProfileData());
 
@@ -138,8 +148,8 @@ public class PGOInliningFeature implements InternalFeature  {
 
     @Override
     public void registerGraalPhases(Providers providers, Suites suites, boolean hosted) {
-        if (!Boolean.getBoolean("disableVirtualInvokeProfilingPhase")) {
-            System.out.println("Injecting virtual invoke profiling phase");
+        if (Boolean.getBoolean("enableInvokeProfilingPhase")) {
+            System.out.println("Injecting invoke profiling phase");
             suites.getHighTier().prependPhase(new InjectInvokeToProfilerAtInvokesPhase());
         }
     }

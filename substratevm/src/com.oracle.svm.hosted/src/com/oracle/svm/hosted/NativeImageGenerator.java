@@ -30,6 +30,7 @@ import static com.oracle.svm.hosted.NativeImageOptions.DiagnosticsMode;
 import static jdk.graal.compiler.hotspot.JVMCIVersionCheck.OPEN_LABSJDK_RELEASE_URL_PATTERN;
 import static jdk.graal.compiler.replacements.StandardGraphBuilderPlugins.registerInvocationPlugins;
 
+import java.io.File;
 import java.io.IOException;
 import java.lang.annotation.Annotation;
 import java.lang.reflect.Method;
@@ -52,6 +53,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
+import com.oracle.svm.hosted.profile.PGOInliningFeature;
+import jdk.graal.compiler.phases.PhasePGO;
 import org.graalvm.collections.EconomicSet;
 import org.graalvm.collections.Pair;
 import org.graalvm.nativeimage.ImageInfo;
@@ -558,6 +561,17 @@ public class NativeImageGenerator {
     protected void doRun(Map<Method, CEntryPointData> entryPoints, JavaMainSupport javaMainSupport, String imageName, NativeImageKind k, SubstitutionProcessor harnessSubstitutions) {
         List<HostedMethod> hostedEntryPoints = new ArrayList<>();
 
+        System.out.printf("enableInlineCachePhase = %s%n", Boolean.getBoolean("enableInlineCachePhase"));
+        System.out.printf("enableInvokeProfilingPhase = %s%n", Boolean.getBoolean("enableInvokeProfilingPhase"));
+        System.out.printf("enablePGODirectInvokeInlining = %s%n", Boolean.getBoolean("enablePGODirectInvokeInlining"));
+        System.out.printf("combinedInlining = %s%n", Boolean.getBoolean("combinedInlining"));
+        System.out.printf("ProfileDataDumpFileName = %s%n", PGOInliningFeature.Options.ProfileDataDumpFileName.getValue());
+        System.out.printf("useCompilerPGOData = %s%n", Boolean.getBoolean("useCompilerPGO"));
+        System.out.printf("profileCompiler = %s%n", Boolean.getBoolean("profileCompiler"));
+
+        PhasePGO phasePGO = PhasePGO.getInstance();
+        phasePGO.init();
+
         OptionValues options = HostedOptionValues.singleton();
 
         try (DebugContext debug = new Builder(options, new GraalDebugHandlersFactory(GraalAccess.getOriginalSnippetReflection())).build();
@@ -763,6 +777,13 @@ public class NativeImageGenerator {
             }
             reporter.printCreationEnd(image.getImageFileSize(), heap.getLayerObjectCount(), image.getImageHeapSize(), codeCache.getCodeAreaSize(), numCompilations, image.getDebugInfoSize());
         }
+
+        if (phasePGO.shouldDumpPGOData()) {
+            phasePGO.dumpToFile();
+        }
+
+        System.out.printf("Total skippable fingerprints recorded: %d%n", phasePGO.numberOfSkippablePhases());
+        System.out.printf("Total phases ran: %d, total phases skipped: %d%n", PhaseSuite.numPhases, PhaseSuite.numPhasesSkipped);
     }
 
     /*

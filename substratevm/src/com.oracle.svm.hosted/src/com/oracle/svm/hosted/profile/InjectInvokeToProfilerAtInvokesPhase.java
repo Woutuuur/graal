@@ -31,10 +31,12 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
     };
 
     private static final String[] EXCLUDED_CONTEXT_METHOD_FUZZY_PARTS = {
-        "VirtualInvokeProfiler",
+        "InvokeProfiler",
         "CallSiteProfile",
         "NoAllocationVerifier",
-        "HashMap"
+        "HashMap",
+        "ConcurrentHashMap",
+        "ClassLoader"
     };
 
     public static boolean shouldProfileInvoke(Invoke invoke) {

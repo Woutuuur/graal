@@ -27,12 +27,16 @@ package jdk.graal.compiler.core.phases;
 import jdk.graal.compiler.debug.DebugCloseable;
 import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.TimerKey;
+import jdk.graal.compiler.graph.Graph;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.nodes.loop.DefaultLoopPolicies;
 import jdk.graal.compiler.nodes.loop.LoopPolicies;
 import jdk.graal.compiler.options.OptionValues;
 import jdk.graal.compiler.phases.BasePhase;
+import jdk.graal.compiler.phases.PhasePGO;
 import jdk.graal.compiler.phases.PhaseSuite;
+import jdk.graal.compiler.phases.tiers.HighTierContext;
+import jdk.graal.compiler.phases.tiers.MidTierContext;
 import jdk.graal.compiler.serviceprovider.GraalServices;
 
 public class BaseTier<C> extends PhaseSuite<C> {
@@ -49,13 +53,39 @@ public class BaseTier<C> extends PhaseSuite<C> {
     @SuppressWarnings({"try"})
     @Override
     protected void run(StructuredGraph graph, C context) {
+        boolean isMidOrHighTier = context instanceof MidTierContext || context instanceof HighTierContext;
+        PhasePGO phasePGO = PhasePGO.getInstance();
+
         for (BasePhase<? super C> phase : getPhases()) {
+            numPhases++;
+
             // Notify the runtime that most objects allocated in previous HIR phase are dead and can
             // be reclaimed. This will lower the chance of allocation failure in the next HIR phase.
             try (DebugCloseable timer = HIRHintedGC.start(graph.getDebug())) {
                 GraalServices.notifyLowMemoryPoint();
             }
-            phase.apply(graph, context);
+
+            if (phasePGO.canSkipPhase(phase, graph)) {
+                numPhasesSkipped++;
+                continue;
+            }
+
+            if (isMidOrHighTier && phasePGO.shouldProfilePhase(phase)) {
+                GraphChangeListener listener = new GraphChangeListener(graph);
+                try (Graph.NodeEventScope s = graph.trackNodeEvents(listener)) {
+                    try (DebugContext.Scope s2 = graph.getDebug().sandbox("GraphChangeListener", null)) {
+                        phase.apply(graph, context);
+                    } catch (Throwable t) {
+                        throw graph.getDebug().handle(t);
+                    }
+                }
+                boolean graphChanged = listener.changed;
+                if (!graphChanged) {
+                    phasePGO.recordSkippablePhase(phase, graph);
+                }
+            } else {
+                phase.apply(graph, context);
+            }
         }
     }
 }
