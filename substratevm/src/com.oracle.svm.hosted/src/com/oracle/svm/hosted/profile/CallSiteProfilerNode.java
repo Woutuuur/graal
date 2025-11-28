@@ -93,7 +93,7 @@ public class CallSiteProfilerNode extends FixedWithNextNode implements Lowerable
         private final ResolvedJavaMethodBytecode byteCode;
 
         public ProfilingMethod(MetaAccessProvider metaAccess) {
-            Method profilingMethod = lookupMethod(InvokeProfiler.class, "profileVirtualInvoke", boolean.class, String.class, String.class, Object.class, int.class);
+            Method profilingMethod = lookupMethod(InvokeProfiler.class, "profileInvoke", boolean.class, String.class, String.class, Object.class, int.class);
 
             this.method = metaAccess.lookupJavaMethod(profilingMethod);
             this.byteCode = new ResolvedJavaMethodBytecode(method);
