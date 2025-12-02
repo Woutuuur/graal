@@ -884,7 +884,7 @@ public class CompileQueue {
 
     public boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
         // Special case, we need to inline the direct invokes inserted in IC branches
-        if (Boolean.getBoolean("enableInlineCachePhase")) {
+        if (Boolean.getBoolean("enableInlineCachePhase") && method.compilationInfo.getCompilationGraph().getNodeCount() <= 1000) {
             CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
 
             if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
