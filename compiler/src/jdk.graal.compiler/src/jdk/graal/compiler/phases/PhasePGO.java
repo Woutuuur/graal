@@ -124,13 +124,15 @@ public class PhasePGO {
         h = 31 * h + phase.contractorName().hashCode();
 
         GraphState gs = graph.getGraphState();
-        h = gs.getStageFlags().stream()
-            .map(Enum::ordinal)
-            .reduce(h, (prev, flag) -> 31 * prev + flag);
+
+        int flagsHash = 0;
+        for (GraphState.StageFlag flag : gs.getStageFlags()) {
+            flagsHash += flag.ordinal();
+        }
 
         int nodesHash = 0;
         for (Node node : graph.getNodes()) {
-            int nodeHash = System.identityHashCode(node.getNodeClass());
+            int nodeHash = node.getClass().getSimpleName().hashCode();
 
             nodeHash = nodeHash * 31 + node.getUsageCount();
             nodeHash = nodeHash * 31 + node.inputs().count();
@@ -138,7 +140,7 @@ public class PhasePGO {
             nodesHash += nodeHash;
         }
 
-        return 31 * h + nodesHash;
+        return 31 * h + 31 * flagsHash + 31 * nodesHash;
     }
 
     public boolean shouldDumpPGOData() {
