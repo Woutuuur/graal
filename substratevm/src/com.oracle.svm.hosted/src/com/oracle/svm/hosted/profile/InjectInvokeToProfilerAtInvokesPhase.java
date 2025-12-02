@@ -36,7 +36,8 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
         "NoAllocationVerifier",
         "HashMap",
         "ConcurrentHashMap",
-        "ClassLoader"
+        "ClassLoader",
+        "EconomicMapImpl"
     };
 
     public static boolean shouldProfileInvoke(Invoke invoke) {
@@ -85,8 +86,6 @@ public class InjectInvokeToProfilerAtInvokesPhase extends BasePhase<HighTierCont
                 graph.addBeforeFixed(invokeNode.asFixedNode(), callSiteProfilerNode);
                 handledInvokes.add(invokeNode);
             });
-
-//        System.out.println("Inserted " + numProfileInvokesInserted + " profiling invokes out of " + totalInvokes + " total invokes.");
     }
 
     private static String getSource(Invokable invokeNode) {
