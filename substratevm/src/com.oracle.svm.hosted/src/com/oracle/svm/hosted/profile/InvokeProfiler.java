@@ -11,14 +11,13 @@ import java.util.Objects;
 public class InvokeProfiler {
     static private final CallSiteProfile[] callSiteProfiles = new CallSiteProfile[10000000];
     private static boolean profilingEnabled = false;
-    private static volatile boolean profilingInProgress = false;
 
     public static void enableProfiling() {
         profilingEnabled = true;
     }
 
     static void profileInvoke(boolean isDirect, String source, String targetMethodName, Object receiver, int callSiteId) {
-        if (!profilingEnabled || NoAllocationVerifier.isActive() || profilingInProgress) return;
+        if (!profilingEnabled || NoAllocationVerifier.isActive()) return;
 
         CallSiteProfile callSiteProfile = callSiteProfiles[callSiteId];
 
@@ -36,7 +35,7 @@ public class InvokeProfiler {
     }
 
     public static void dumpProfileData() {
-        profilingInProgress = true;
+        profilingEnabled = false;
 
         long minUniqueReceiverCount = 1;
         long minTotalCount = 0;
