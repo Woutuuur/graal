@@ -39,6 +39,8 @@ import jdk.graal.compiler.phases.tiers.HighTierContext;
 import jdk.graal.compiler.phases.tiers.MidTierContext;
 import jdk.graal.compiler.serviceprovider.GraalServices;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class BaseTier<C> extends PhaseSuite<C> {
 
     /**
@@ -65,7 +67,11 @@ public class BaseTier<C> extends PhaseSuite<C> {
                 GraalServices.notifyLowMemoryPoint();
             }
 
-            if (phasePGO.canSkipPhase(phase, graph)) {
+            long beforeCheckTime = System.nanoTime();
+            boolean canSkipPhase = phasePGO.canSkipPhase(phase, graph);
+            checkTime.getAndAdd(System.nanoTime() - beforeCheckTime);
+
+            if (canSkipPhase) {
                 numPhasesSkipped++;
                 continue;
             }
@@ -74,7 +80,13 @@ public class BaseTier<C> extends PhaseSuite<C> {
                 GraphChangeListener listener = new GraphChangeListener(graph);
                 try (Graph.NodeEventScope s = graph.trackNodeEvents(listener)) {
                     try (DebugContext.Scope s2 = graph.getDebug().sandbox("GraphChangeListener", null)) {
+                        long startTime = System.nanoTime();
                         phase.apply(graph, context);
+                        long phaseExecutionTime = System.nanoTime() - startTime;
+                        totalPhaseTimes.computeIfAbsent(phase.getClass(), k -> new AtomicLong()).getAndAdd(phaseExecutionTime);
+                        if (!listener.changed) {
+                            skippablePhaseTimes.computeIfAbsent(phase.getClass(), k -> new AtomicLong()).getAndAdd(phaseExecutionTime);
+                        }
                     } catch (Throwable t) {
                         throw graph.getDebug().handle(t);
                     }

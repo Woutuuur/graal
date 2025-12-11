@@ -27,6 +27,7 @@ package com.oracle.svm.hosted;
 import static com.oracle.graal.pointsto.api.PointstoOptions.UseExperimentalReachabilityAnalysis;
 import static com.oracle.svm.hosted.NativeImageOptions.DiagnosticsDir;
 import static com.oracle.svm.hosted.NativeImageOptions.DiagnosticsMode;
+import static jdk.graal.compiler.core.common.util.ReversedList.reversed;
 import static jdk.graal.compiler.hotspot.JVMCIVersionCheck.OPEN_LABSJDK_RELEASE_URL_PATTERN;
 import static jdk.graal.compiler.replacements.StandardGraphBuilderPlugins.registerInvocationPlugins;
 
@@ -50,6 +51,8 @@ import java.util.Map;
 import java.util.ServiceLoader;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.LongAdder;
 import java.util.function.BooleanSupplier;
 import java.util.function.Function;
 
@@ -784,6 +787,20 @@ public class NativeImageGenerator {
 
         System.out.printf("Total skippable fingerprints recorded: %d%n", phasePGO.numberOfSkippablePhases());
         System.out.printf("Total phases ran: %d, total phases skipped: %d%n", PhaseSuite.numPhases, PhaseSuite.numPhasesSkipped);
+
+        System.out.printf("%nTotal phase time cumulative: %.3f sec%n", (double) PhaseSuite.totalPhaseTimes.values().stream().map(AtomicLong::get).reduce(0L, Long::sum) / 1e9);
+        PhaseSuite.totalPhaseTimes.entrySet().stream()
+                .map((e) -> Map.entry(e.getKey().getSimpleName(), e.getValue().get()))
+                .sorted(Map.Entry.comparingByValue(Collections.reverseOrder()))
+                .forEach((e) -> System.out.printf("Phase %-35s total time: %.3f sec%n", e.getKey(), (double) e.getValue() / 1e9));
+
+        System.out.printf("%nTotal skippable phase time cumulative: %.3f sec%n", (double) PhaseSuite.skippablePhaseTimes.values().stream().map(AtomicLong::get).reduce(0L, Long::sum) / 1e9);
+        PhaseSuite.skippablePhaseTimes.entrySet().stream()
+            .map((e) -> Map.entry(e.getKey().getSimpleName(), e.getValue().get()))
+            .sorted(Map.Entry.comparingByValue(Collections.reverseOrder()))
+            .forEach((e) -> System.out.printf("Phase %-35s total time: %.3f sec%n", e.getKey(), (double) e.getValue() / 1e9));
+
+        System.out.printf("%nTotal time to pass skippable check: %.3f sec%n", (double) PhaseSuite.checkTime.get() / 1e9);
     }
 
     /*

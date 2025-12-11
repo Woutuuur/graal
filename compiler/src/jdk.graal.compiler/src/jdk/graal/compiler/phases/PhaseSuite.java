@@ -32,6 +32,8 @@ import java.util.List;
 import java.util.ListIterator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import jdk.graal.compiler.core.common.util.PhasePlan;
@@ -417,6 +419,10 @@ public class PhaseSuite<C> extends BasePhase<C> implements PhasePlan<BasePhase<?
     public static long numPhases = 0;
     public static long numPhasesSkipped = 0;
 
+    public static Map<Class<?>, AtomicLong> totalPhaseTimes = new ConcurrentHashMap<>();
+    public static Map<Class<?>, AtomicLong> skippablePhaseTimes = new ConcurrentHashMap<>();
+    public static AtomicLong checkTime = new AtomicLong();
+
     @Override
     protected void run(StructuredGraph graph, C context) {
         boolean printGraphStateDiff = Options.PrintGraphStateDiff.getValue(graph.getOptions());
@@ -428,7 +434,11 @@ public class PhaseSuite<C> extends BasePhase<C> implements PhasePlan<BasePhase<?
         for (BasePhase<? super C> phase : phases) {
             numPhases++;
             try {
-                if (phasePGO.canSkipPhase(phase, graph)) {
+                long beforeCheckTime = System.nanoTime();
+                boolean canSkipPhase = phasePGO.canSkipPhase(phase, graph);
+                checkTime.getAndAdd(System.nanoTime() - beforeCheckTime);
+
+                if (canSkipPhase) {
                     numPhasesSkipped++;
                     index++;
                     continue;
@@ -438,7 +448,13 @@ public class PhaseSuite<C> extends BasePhase<C> implements PhasePlan<BasePhase<?
                     GraphChangeListener listener = new GraphChangeListener(graph);
                     try (Graph.NodeEventScope s = graph.trackNodeEvents(listener)) {
                         try (DebugContext.Scope s2 = graph.getDebug().sandbox("GraphChangeListener", null)) {
+                            long startTime = System.nanoTime();
                             phase.apply(graph, context);
+                            long phaseExecutionTime = System.nanoTime() - startTime;
+                            totalPhaseTimes.computeIfAbsent(phase.getClass(), k -> new AtomicLong()).getAndAdd(phaseExecutionTime);
+                            if (!listener.changed) {
+                                skippablePhaseTimes.computeIfAbsent(phase.getClass(), k -> new AtomicLong()).getAndAdd(phaseExecutionTime);
+                            }
                         } catch (Throwable t) {
                             throw graph.getDebug().handle(t);
                         }
