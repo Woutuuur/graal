@@ -1186,12 +1186,6 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
                 processBlock(block);
             }
         }
-
-//        long numIndirectCallsiteProfiles = callSiteProfilesToInline.stream().filter(CallSiteProfile::isIndirectCall).count();
-//
-//        System.out.println("[BytecodeParser] Number of ICs generated so far: " + numICsGenerated + " from PGO data");
-//        System.out.println("[BytecodeParser] for a total of " + numIndirectCalls + " indirect (virtual/interface) calls");
-//        System.out.println("[BytecodeParser] and " + numIndirectCallsiteProfiles + " indirect call site profiles\n");
     }
 
     private boolean computeKindVerification(FrameStateBuilder startFrameState) {
@@ -1991,9 +1985,6 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
         return getMetaAccess().lookupJavaMethod(m);
     }
 
-    public static AtomicInteger numICs = null;
-    public static AtomicInteger cancelledDueToCodeSize = null;
-
     // Returns true if the IC was generated and no further work is required for this invoke and false otherwise (i.e. it should be generated normally).
     protected boolean genInlineCachedInvoke(ResolvedJavaMethod resolvedTarget, InvokeKind invokeKind, ResolvedJavaType referencedType) {
         if (!Boolean.getBoolean("enableInlineCachePhase") || callSiteProfilesToInline == null || callSiteProfilesToInline.isEmpty()) {
@@ -2040,8 +2031,6 @@ public abstract class BytecodeParser extends CoreProvidersDelegate implements Gr
 
             resolvedTopMethods.add(m);
         }
-
-        numICs.getAndIncrement();
 
         ValueNode[] args = frameState.popArguments(resolvedTarget.getSignature().getParameterCount(true));
         JavaKind returnType = resolvedTarget.getSignature().getReturnKind();
