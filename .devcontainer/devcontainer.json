@@ -1,8 +1,27 @@
 {
-	"name": "GraalVM CE dev environment",
-	"dockerFile": "Dockerfile",
-
-	"extensions": [
-		"vscjava.vscode-java-pack"
-	]
+	"name": "Substratevm Development Environment",
+	"build": {
+		"dockerfile": "Dockerfile",
+		"context": "..",
+		"args": {
+			"MX_BRANCH": "release/graal-vm/24.2",
+			"DACAPO_VERSION": "23.11-MR2-chopin"
+		}
+	},
+	"workspaceFolder": "/workspace/graal/substratevm",
+	"workspaceMount": "source=${localWorkspaceFolder}/..,target=/workspace,type=bind,consistency=cached",
+	"customizations": {
+		"jetbrains": {
+			"plugins": [
+				"Pythonid",
+				"PythonCore"
+            ]
+        }
+    },
+	"features": {
+		"ghcr.io/devcontainers/features/java:1": {
+			"version": "24-graal"
+		}
+	},
+	"onCreateCommand": "bash ../.devcontainer/onCreateCommand.sh"
 }

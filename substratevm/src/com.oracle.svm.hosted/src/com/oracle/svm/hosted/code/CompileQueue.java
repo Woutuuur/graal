@@ -34,10 +34,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
+import com.oracle.svm.hosted.profile.PGOInliningFeature;
+import jdk.graal.compiler.java.CallSiteProfile;
+import jdk.vm.ci.meta.LineNumberTable;
 import org.graalvm.nativeimage.ImageSingletons;
 
 import com.oracle.graal.pointsto.api.PointstoOptions;
@@ -315,19 +319,44 @@ public class CompileQueue {
         }
     }
 
-    protected class TrivialInlineTask implements Task {
+    private static CallSiteProfile findMatchingCallSiteProfileForCallee(HostedMethod contextMethod, HostedMethod callee, int invokeBci) {
+        LineNumberTable lineNumberTable = contextMethod.getLineNumberTable();
+        if (lineNumberTable == null || invokeBci == -1) {
+            return null;
+        }
+
+        int lineNumber = lineNumberTable.getLineNumber(invokeBci);
+        String fileName = contextMethod.getDeclaringClass().getSourceFileName();
+        String source = String.format("%s:%d", fileName, lineNumber);
+        String calleeMethod = callee.format("%H.%n(%p):%r");
+
+        List<CallSiteProfile> matchingProfiles = PGOInliningFeature.getCallSiteProfilesToInline().stream()
+            .filter(profile -> profile.getTargetMethod().equals(calleeMethod))
+            .filter(profile -> source.equals(profile.getSource()))
+            .limit(2)
+            .toList();
+
+        if (matchingProfiles.size() != 1) {
+            return null;
+        }
+
+        CallSiteProfile matchingProfile = matchingProfiles.getFirst();
+        return matchingProfile.isDirectCall() ? matchingProfile : null;
+    }
+
+    protected class InlineTask implements Task {
 
         private final HostedMethod method;
         private final Description description;
 
-        TrivialInlineTask(HostedMethod method) {
+        InlineTask(HostedMethod method) {
             this.method = method;
             this.description = new Description(method, method.getName());
         }
 
         @Override
         public void run(DebugContext debug) {
-            doInlineTrivial(debug, method);
+            doInline(debug, method);
         }
 
         @Override
@@ -426,7 +455,7 @@ public class CompileQueue {
                 ImageSingletons.lookup(HostedHeapDumpFeature.class).beforeInlining();
             }
             try (ProgressReporter.ReporterClosable ac = reporter.printInlining()) {
-                inlineTrivialMethods(debug);
+                inlineMethods(debug);
             }
             if (ImageSingletons.contains(HostedHeapDumpFeature.class)) {
                 ImageSingletons.lookup(HostedHeapDumpFeature.class).afterInlining();
@@ -698,7 +727,7 @@ public class CompileQueue {
     }
 
     @SuppressWarnings("try")
-    protected void inlineTrivialMethods(DebugContext debug) throws InterruptedException {
+    protected void inlineMethods(DebugContext debug) throws InterruptedException {
         int round = 0;
         do {
             ProgressReporter.singleton().reportStageProgress();
@@ -711,7 +740,7 @@ public class CompileQueue {
                         for (MultiMethod multiMethod : method.getAllMultiMethods()) {
                             HostedMethod hMethod = (HostedMethod) multiMethod;
                             if (hMethod.compilationInfo.getCompilationGraph() != null) {
-                                executor.execute(new TrivialInlineTask(hMethod));
+                                executor.execute(new InlineTask(hMethod));
                             }
                         }
                     });
@@ -728,13 +757,14 @@ public class CompileQueue {
         } while (inliningProgress);
     }
 
-    class TrivialInliningPlugin implements InlineInvokePlugin {
+    class InliningPlugin implements InlineInvokePlugin {
 
         boolean inlinedDuringDecoding;
 
         @Override
         public InlineInfo shouldInlineInvoke(GraphBuilderContext b, ResolvedJavaMethod method, ValueNode[] args) {
-            if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method) && b.recursiveInliningDepth(method) == 0) {
+            if (makeInlineDecision((HostedMethod) b.getMethod(), (HostedMethod) method, b.bci()) && b.recursiveInliningDepth(method) == 0) {
+                numInlinedMethods++;
                 return InlineInfo.createStandardInlineInfo(method);
             } else {
                 return InlineInfo.DO_NOT_INLINE_WITH_EXCEPTION;
@@ -749,7 +779,7 @@ public class CompileQueue {
 
     class InliningGraphDecoder extends PEGraphDecoder {
 
-        InliningGraphDecoder(StructuredGraph graph, Providers providers, TrivialInliningPlugin inliningPlugin) {
+        InliningGraphDecoder(StructuredGraph graph, Providers providers, InliningPlugin inliningPlugin) {
             super(AnalysisParsedGraph.HOST_ARCHITECTURE, graph, providers, null,
                             null,
                             new InlineInvokePlugin[]{inliningPlugin},
@@ -769,11 +799,11 @@ public class CompileQueue {
     }
 
     // Wrapper to clearly identify phase
-    class TrivialInlinePhase extends Phase {
+    class InlinePhase extends Phase {
         final InliningGraphDecoder decoder;
         final HostedMethod method;
 
-        TrivialInlinePhase(InliningGraphDecoder decoder, HostedMethod method) {
+        InlinePhase(InliningGraphDecoder decoder, HostedMethod method) {
             this.decoder = decoder;
             this.method = method;
         }
@@ -785,35 +815,18 @@ public class CompileQueue {
 
         @Override
         public CharSequence getName() {
-            return "TrivialInline";
+            return "Inline";
         }
     }
 
     @SuppressWarnings("try")
-    private void doInlineTrivial(DebugContext debug, HostedMethod method) {
-        /*
-         * Before doing any work, check if there is any potential for inlining.
-         *
-         * Note that we do not have information about the recursive inlining depth, but that is OK
-         * because in that case we just over-estimate the inlining potential, i.e., we do the
-         * decoding just to find out that nothing could be inlined.
-         */
-        boolean inliningPotential = false;
-        for (var invokeInfo : method.compilationInfo.getCompilationGraph().getInvokeInfos()) {
-            if (invokeInfo.getInvokeKind().isDirect() && makeInlineDecision(method, invokeInfo.getTargetMethod())) {
-                inliningPotential = true;
-                break;
-            }
-        }
-        if (!inliningPotential) {
-            return;
-        }
+    private void doInline(DebugContext debug, HostedMethod method) {
         var providers = runtimeConfig.lookupBackend(method).getProviders();
         var graph = method.compilationInfo.createGraph(debug, getCustomizedOptions(method, debug), CompilationIdentifier.INVALID_COMPILATION_ID, false);
-        try (var s = debug.scope("InlineTrivial", graph, method, this)) {
-            var inliningPlugin = new TrivialInliningPlugin();
+        try (var s = debug.scope("Inline", graph, method, this)) {
+            var inliningPlugin = new InliningPlugin();
             var decoder = new InliningGraphDecoder(graph, providers, inliningPlugin);
-            new TrivialInlinePhase(decoder, method).apply(graph);
+            new InlinePhase(decoder, method).apply(graph);
 
             if (inliningPlugin.inlinedDuringDecoding) {
                 CanonicalizerPhase.create().apply(graph, providers);
@@ -830,7 +843,6 @@ public class CompileQueue {
                      */
                     method.compilationInfo.setTrivialInliningDisabled();
                     inliningProgress = true;
-
                 } else {
                     /*
                      * If we publish the new graph immediately, it can be picked up by other threads
@@ -846,7 +858,9 @@ public class CompileQueue {
         }
     }
 
-    private boolean makeInlineDecision(HostedMethod method, HostedMethod callee) {
+    private int numInlinedMethods = 0;
+
+    private boolean originalMakeInlineDecision(HostedMethod method, HostedMethod callee) {
         // GR-57832 this will be removed
         if (callee.compilationInfo.getCompilationGraph() == null) {
             /*
@@ -860,13 +874,53 @@ public class CompileQueue {
         if (universe.hostVM().neverInlineTrivial(method.getWrapped(), callee.getWrapped())) {
             return false;
         }
+
         if (callee.shouldBeInlined()) {
             return true;
         }
-        if (optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled()) {
+
+        return optionAOTTrivialInline && callee.compilationInfo.isTrivialMethod() && !method.compilationInfo.isTrivialInliningDisabled();
+    }
+
+    public boolean makeInlineDecision(HostedMethod method, HostedMethod callee, int invokeBci) {
+        // Special case, we need to inline the direct invokes inserted in IC branches
+        if (Boolean.getBoolean("enableInlineCachePhase") && method.compilationInfo.getCompilationGraph().getNodeCount() <= 1000) {
+            CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
+
+            if (matchingProfile != null && matchingProfile.isInlineCachedIndirectCall) {
+//                System.out.println("Inlining IC direct call from " + method.format("%H.%n(%p)") + " to " + callee.format("%H.%n(%p)"));
+                return true;
+            }
+        }
+
+        if (!PGOInliningFeature.performPGOBasedInlining()) {
+            return originalMakeInlineDecision(method, callee);
+        }
+
+        if (callee.shouldBeInlined()) {
             return true;
         }
-        return false;
+
+        if (callee.compilationInfo.getCompilationGraph() == null || !callee.canBeInlined()) {
+            return false;
+        }
+
+        // Even though we care less about the limit for profiled invokes, we still need _a_ limit,
+        // to prevent excessive inlining e.g. in cases of (indirect) recursion. We'll still be
+        // generous with the limit, to not miss out on inlining opportunities.
+        if (callee.compilationInfo.getCompilationGraph().getNodeCount() > 400) {
+            return false;
+        }
+
+        if (Boolean.getBoolean("combinedInlining")) {
+            if (originalMakeInlineDecision(method, callee)) {
+                return true;
+            }
+        }
+
+        CallSiteProfile matchingProfile = findMatchingCallSiteProfileForCallee(method, callee, invokeBci);
+
+        return matchingProfile != null && !matchingProfile.isInlineCachedIndirectCall;
     }
 
     private static boolean mustNotAllocateCallee(HostedMethod method) {
@@ -1323,6 +1377,7 @@ public class CompileQueue {
                 return result;
             }
         } catch (Throwable ex) {
+            ex.printStackTrace();
             GraalError error = ex instanceof GraalError ? (GraalError) ex : new GraalError(ex);
             error.addContext("method: " + method.format("%r %H.%n(%p)") + "  [" + reason + "]");
             throw error;

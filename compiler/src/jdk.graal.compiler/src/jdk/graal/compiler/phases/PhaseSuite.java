@@ -35,12 +35,16 @@ import java.util.Optional;
 import java.util.function.Supplier;
 
 import jdk.graal.compiler.core.common.util.PhasePlan;
+import jdk.graal.compiler.debug.DebugContext;
 import jdk.graal.compiler.debug.GraalError;
 import jdk.graal.compiler.debug.TTY;
+import jdk.graal.compiler.graph.Graph;
 import jdk.graal.compiler.nodes.GraphState;
 import jdk.graal.compiler.nodes.StructuredGraph;
 import jdk.graal.compiler.options.Option;
 import jdk.graal.compiler.options.OptionKey;
+import jdk.graal.compiler.phases.tiers.HighTierContext;
+import jdk.graal.compiler.phases.tiers.MidTierContext;
 import jdk.graal.compiler.serviceprovider.GraalServices;
 
 /**
@@ -410,24 +414,48 @@ public class PhaseSuite<C> extends BasePhase<C> implements PhasePlan<BasePhase<?
         this.updateGraphState(graphState);
     }
 
+    public static long numPhases = 0;
+    public static long numPhasesSkipped = 0;
+
     @Override
     protected void run(StructuredGraph graph, C context) {
         boolean printGraphStateDiff = Options.PrintGraphStateDiff.getValue(graph.getOptions());
-        GraphState graphStateBefore = null;
-        if (printGraphStateDiff) {
-            graphStateBefore = graph.getGraphState().copy();
-        }
+        GraphState graphStateBefore = graph.getGraphState().copy();
+        boolean isMidOrHighTier = context instanceof MidTierContext || context instanceof HighTierContext;
+        PhasePGO phasePGO = PhasePGO.getInstance();
+
         int index = 0;
         for (BasePhase<? super C> phase : phases) {
+            numPhases++;
             try {
-                phase.apply(graph, context);
+                if (phasePGO.canSkipPhase(phase, graph)) {
+                    numPhasesSkipped++;
+                    index++;
+                    continue;
+                }
+
+                if (isMidOrHighTier && phasePGO.shouldProfilePhase(phase)) {
+                    GraphChangeListener listener = new GraphChangeListener(graph);
+                    try (Graph.NodeEventScope s = graph.trackNodeEvents(listener)) {
+                        try (DebugContext.Scope s2 = graph.getDebug().sandbox("GraphChangeListener", null)) {
+                            phase.apply(graph, context);
+                        } catch (Throwable t) {
+                            throw graph.getDebug().handle(t);
+                        }
+                    }
+                    boolean graphChanged = listener.changed;
+                    if (!graphChanged) {
+                        phasePGO.recordSkippablePhase(phase, graph);
+                    }
+                } else {
+                    phase.apply(graph, context);
+                }
 
                 if (printGraphStateDiff && !graph.getGraphState().equals(graphStateBefore)) {
                     if (graphStateDiffs == null) {
                         graphStateDiffs = new HashMap<>();
                     }
                     graphStateDiffs.put(index, graph.getGraphState().updateFromPreviousToString(graphStateBefore));
-                    graphStateBefore = graph.getGraphState().copy();
                 }
             } catch (Throwable t) {
                 if (Boolean.parseBoolean(GraalServices.getSavedProperty("test.graal.compilationplan.fuzzing"))) {
@@ -439,6 +467,7 @@ public class PhaseSuite<C> extends BasePhase<C> implements PhasePlan<BasePhase<?
                 failureIndex = index;
                 throw t;
             }
+            graphStateBefore = graph.getGraphState().copy();
             index++;
         }
     }

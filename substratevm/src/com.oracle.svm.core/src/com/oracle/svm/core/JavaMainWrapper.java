@@ -189,6 +189,7 @@ public class JavaMainWrapper {
                 javaMainSupport.javaMainHandle.invokeExact(mainArgs);
             }
         }
+
     }
 
     /**
